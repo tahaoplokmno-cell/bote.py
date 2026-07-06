@@ -60,6 +60,9 @@ def update_balance(user_id, amount):
     db["users"][uid]["balance_usd"] = db["users"][uid].get("balance_usd", 0) + amount
     save_db(db)
 
+def is_admin(user_id):
+    return str(user_id) == ADMIN_ID
+
 # ==================== القوائم الرئيسية ====================
 main_menu = ReplyKeyboardMarkup([
     ['🏪 المتجر', '🤖 إنشاء بوت'],
@@ -97,7 +100,6 @@ phone_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]
 ])
 
-# ==================== قوائم المحفظة والاسترجاع ====================
 wallet_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("💵 شحن بالدولار", callback_data="charge#usd")],
     [InlineKeyboardButton("🇸🇾 شحن بالليرة", callback_data="charge#syr")],
@@ -110,7 +112,7 @@ refund_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]
 ])
 
-# ==================== لوحة التحكم الإدارية (ضخمة) ====================
+# ==================== لوحة التحكم الإدارية الضخمة ====================
 admin_panel = InlineKeyboardMarkup([
     [InlineKeyboardButton("📊 الإحصائيات", callback_data="adm#stats")],
     [InlineKeyboardButton("📢 إرسال إعلان", callback_data="adm#broadcast")],
