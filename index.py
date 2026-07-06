@@ -35,7 +35,9 @@ def load_db():
                 "games": {
                     "🎮 ببجي موبايل": ["60 شدة - 1.20$", "325 شدة - 5.00$", "660 شدة - 10.00$", "1800 شدة - 25.00$"],
                     "🔥 فري فاير": ["100 دايموند - 2.00$", "200 دايموند - 4.00$", "400 دايموند - 7.00$"],
-                    "🎮 روبلوكس": ["100 روبوكس - 1.50$", "500 روبوكس - 6.00$", "1000 روبوك스 - 11.00$"]
+                    "🎮 روبلوكس": ["100 روبوكس - 1.50$", "500 روبوكس - 6.00$", "1000 روبوكس - 11.00$"],
+                    "🎮 كود فري فاير": ["كود 5$ - 5.00$", "كود 10$ - 10.00$"],
+                    "🎮 ماين كرافت": ["1720 كوين - 10.00$", "3500 كوين - 20.00$"]
                 },
                 "cards": {
                     "🎟️ بطاقات ستيم": ["فئة 5$ - 5.50$", "فئة 10$ - 11.00$"],
@@ -60,9 +62,6 @@ def update_balance(user_id, amount):
     db["users"][uid]["balance_usd"] = db["users"][uid].get("balance_usd", 0) + amount
     save_db(db)
 
-def is_admin(user_id):
-    return str(user_id) == ADMIN_ID
-
 # ==================== القوائم ====================
 main_menu = ReplyKeyboardMarkup([
     ['🏪 المتجر', '🤖 إنشاء بوت'],
@@ -81,6 +80,8 @@ games_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("🎮 ببجي موبايل", callback_data="game#🎮 ببجي موبايل")],
     [InlineKeyboardButton("🔥 فري فاير", callback_data="game#🔥 فري فاير")],
     [InlineKeyboardButton("🎮 روبلوكس", callback_data="game#🎮 روبلوكس")],
+    [InlineKeyboardButton("🎮 كود فري فاير", callback_data="game#🎮 كود فري فاير")],
+    [InlineKeyboardButton("🎮 ماين كرافت", callback_data="game#🎮 ماين كرافت")],
     [InlineKeyboardButton("🔙 رجوع للمتجر", callback_data="store#back")],
     [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]
 ])
@@ -117,8 +118,9 @@ admin_panel = InlineKeyboardMarkup([
     [InlineKeyboardButton("💰 إدارة المحفظة", callback_data="adm#wallet")],
     [InlineKeyboardButton("👥 المستخدمين", callback_data="adm#users")],
     [InlineKeyboardButton("🛒 إدارة المتجر", callback_data="adm#store")],
-    [InlineKeyboardButton("📱 إدارة الهاتف", callback_data="adm#phone")],
+    [InlineKeyboardButton("📱 طلبات الشحن", callback_data="adm#charge_orders")],
     [InlineKeyboardButton("🤖 طلبات البوتات", callback_data="adm#bot_orders")],
+    [InlineKeyboardButton("💰 طلبات الاسترجاع", callback_data="adm#refund_orders")],
     [InlineKeyboardButton("⚙️ الإعدادات", callback_data="adm#settings")],
     [InlineKeyboardButton("🗑️ تنظيف البيانات", callback_data="adm#clean")],
     [InlineKeyboardButton("💾 نسخة احتياطية", callback_data="adm#backup")],
@@ -168,7 +170,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     db = load_db()
 
-    # ===== أزرار القائمة الرئيسية (المشكلة الأساسية) =====
+    # ===== أزرار القائمة الرئيسية =====
     if text == '🏪 المتجر':
         await update.message.reply_text("🛍️ اختر القسم:", reply_markup=store_menu)
         return
@@ -195,7 +197,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📞 **الدعم الفني**\n{DEVELOPER_USERNAME}", parse_mode='Markdown')
         return
 
-    # ===== باقي المعالجات (كلمة السر، شحن، إلخ) =====
+    # ===== كلمة السر =====
     if context.user_data.get('awaiting_password'):
         if text == ADMIN_PASSWORD:
             context.user_data['admin_dashboard'] = True
@@ -206,19 +208,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ كلمة سر خاطئة!")
         return
 
-    if context.user_data.get('awaiting_broadcast'):
-        context.user_data['awaiting_broadcast'] = False
-        await update.message.reply_text("🚀 جاري الإرسال...")
-        count = 0
-        for uid in db["users"]:
-            try:
-                await context.bot.send_message(uid, f"📢 **إعلان عام**\n━━━━━━━━━━━━━━━━━━━━\n{text}", parse_mode='Markdown')
-                count += 1
-            except:
-                pass
-        await update.message.reply_text(f"✅ تم إرسال الإعلان إلى {count} مستخدم.")
-        return
-
+    # ===== إضافة رصيد (أدمن) =====
     if context.user_data.get('awaiting_add_balance'):
         try:
             parts = text.split('|')
@@ -240,27 +230,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم: `آيدي|المبلغ`")
         return
 
-    if context.user_data.get('awaiting_game_id'):
-        context.user_data['game_id'] = text
-        context.user_data['action'] = 'confirmed'
-        item = context.user_data.get('item')
-        price = context.user_data.get('price')
-        confirm_btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✔️ تأكيد الشراء", callback_data="confirm_order")]
-        ])
-        await update.message.reply_text(
-            f"🎯 **تأكيد الطلب**\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎁 المنتج: {item}\n"
-            f"💰 السعر: ${price:.2f}\n"
-            f"🆔 الآيدي: {text}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚠️ اضغط زر التأكيد لإتمام العملية.",
-            reply_markup=confirm_btn,
-            parse_mode='Markdown'
-        )
-        return
-
+    # ===== شحن الرصيد =====
     if context.user_data.get('awaiting_charge'):
         try:
             amount = float(text)
@@ -277,6 +247,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ اكتب رقماً صحيحاً!")
         return
 
+    # ===== استرجاع الأموال =====
     if context.user_data.get('awaiting_refund'):
         try:
             amount = float(text)
@@ -290,74 +261,54 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if balance < amount:
                 await update.message.reply_text(f"❌ رصيدك (${balance:.2f}) غير كافٍ!")
                 return
-            update_balance(user_id, -amount)
-            context.user_data['awaiting_refund'] = False
+            # إرسال طلب للأدمن
             await context.bot.send_message(
                 ADMIN_CHANNEL_ID,
                 f"💰 **طلب استرجاع أموال**\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"👤 {update.effective_user.first_name}\n"
-                f"🆔 {user_id}\n"
-                f"💵 المبلغ: ${amount:.2f}"
+                f"👤 الزبون: {update.effective_user.first_name}\n"
+                f"🆔 المعرف: {user_id}\n"
+                f"💵 المبلغ: ${amount:.2f}\n"
+                f"📅 التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ موافقة", callback_data=f"refund_accept#{user_id}#{amount}")],
+                    [InlineKeyboardButton("❌ رفض", callback_data=f"refund_reject#{user_id}")]
+                ])
             )
-            await update.message.reply_text(f"✅ تم استرجاع ${amount:.2f} إلى محفظتك!")
+            await update.message.reply_text("✅ تم إرسال طلب الاسترجاع للإدارة، في انتظار الموافقة.")
+            context.user_data['awaiting_refund'] = False
         except:
             await update.message.reply_text("❌ اكتب رقماً صحيحاً!")
         return
 
-    if context.user_data.get('awaiting_phone'):
-        context.user_data['phone_number'] = text
-        context.user_data['awaiting_phone'] = False
-        context.user_data['awaiting_phone_amount'] = True
-        await update.message.reply_text("✍️ اكتب المبلغ المراد شحنه بالليرة:")
+    # ===== كتابة الآيدي (الشراء) =====
+    if context.user_data.get('awaiting_game_id'):
+        context.user_data['game_id'] = text
+        context.user_data['action'] = 'confirmed'
+        item = context.user_data.get('item')
+        price = context.user_data.get('price')
+        game_name = context.user_data.get('game_name')
+        # إرسال طلب للأدمن
+        await context.bot.send_message(
+            ADMIN_CHANNEL_ID,
+            f"🛒 **طلب شراء جديد**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 الزبون: {update.effective_user.first_name}\n"
+            f"🆔 المعرف: {user_id}\n"
+            f"🎁 المنتج: {item}\n"
+            f"💰 السعر: ${price:.2f}\n"
+            f"🆔 الآيدي: {text}\n"
+            f"📅 التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ موافقة وخصم", callback_data=f"order_accept#{user_id}#{price}#{item}#{text}")],
+                [InlineKeyboardButton("❌ رفض", callback_data=f"order_reject#{user_id}")]
+            ])
+        )
+        await update.message.reply_text("✅ تم إرسال طلبك للإدارة، في انتظار الموافقة.")
+        context.user_data['awaiting_game_id'] = False
         return
 
-    if context.user_data.get('awaiting_phone_amount'):
-        try:
-            amount = float(text)
-            if amount <= 0:
-                raise ValueError
-            rate = db.get('exchange_rate', 14500)
-            usd_amount = amount / rate
-            balance = get_balance(user_id)
-            if balance < usd_amount:
-                await update.message.reply_text(f"❌ رصيدك (${balance:.2f}) غير كافٍ!")
-                return
-            update_balance(user_id, -usd_amount)
-            phone = context.user_data.get('phone_number')
-            card_type = context.user_data.get('card_type', 'MTN')
-            context.user_data['awaiting_phone_amount'] = False
-            await update.message.reply_text(f"✅ تم شحن {amount:,.0f} ل.س إلى {phone} ({card_type})")
-            await context.bot.send_message(
-                ADMIN_CHANNEL_ID,
-                f"📱 **طلب شحن هاتف**\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"👤 {update.effective_user.first_name}\n"
-                f"📞 {phone}\n"
-                f"📶 {card_type}\n"
-                f"💰 {amount:,.0f} ل.س"
-            )
-        except:
-            await update.message.reply_text("❌ اكتب رقماً صحيحاً!")
-        return
-
-    if context.user_data.get('awaiting_bot_desc'):
-        context.user_data['bot_desc'] = text
-        context.user_data['awaiting_bot_desc'] = False
-        context.user_data['awaiting_bot_contact'] = True
-        await update.message.reply_text("✍️ أرسل رقم تواصلك أو Username:")
-        return
-
-    if context.user_data.get('awaiting_bot_contact'):
-        context.user_data['bot_contact'] = text
-        context.user_data['awaiting_bot_contact'] = False
-        server_btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔥 سيرفر قوي 24 ساعة", callback_data="srv#strong")],
-            [InlineKeyboardButton("💤 سيرفر عادي 12-18 ساعة", callback_data="srv#normal")]
-        ])
-        await update.message.reply_text("🖥️ **اختر نوع السيرفر:**", reply_markup=server_btn)
-        return
-
+    # ===== طلب بوت (من الأدمن) =====
     if context.user_data.get('awaiting_bot_price'):
         target_id = context.user_data.get('bot_target_id')
         if target_id:
@@ -382,10 +333,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting_bot_time'] = False
         return
 
-    # ===== أي رسالة أخرى =====
     await update.message.reply_text("⚠️ لم أفهم طلبك، استخدم الأزرار من القائمة.")
 
-# ==================== معالج الأزرار (الكولباك) ====================
+# ==================== معالج الأزرار ====================
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -393,49 +343,43 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     db = load_db()
 
-    # ===== أزرار الإدارة =====
+    # ============================================================
+    # ==================== أزرار الإدارة ========================
+    # ============================================================
     if data.startswith("adm#"):
         action = data.split('#')[1]
 
         if action == "stats":
             total_users = len(db["users"])
             total_balance = sum(u.get("balance_usd", 0) for u in db["users"].values())
-            total_orders = len(db.get("orders", []))
-            total_bot_orders = len(db.get("bot_orders", []))
             await query.edit_message_text(
                 f"📊 **الإحصائيات**\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"👥 المستخدمين: {total_users}\n"
-                f"💰 إجمالي الرصيد: ${total_balance:.2f}\n"
-                f"📦 الطلبات: {total_orders}\n"
-                f"🤖 طلبات البوتات: {total_bot_orders}\n"
-                f"📈 متوسط الرصيد: ${(total_balance / (total_users or 1)):.2f}",
+                f"💰 إجمالي الرصيد: ${total_balance:.2f}",
                 parse_mode='Markdown'
             )
             return
 
         if action == "broadcast":
             context.user_data['awaiting_broadcast'] = True
-            await query.edit_message_text("✍️ اكتب الرسالة التي تريد إرسالها لجميع المستخدمين:")
+            await query.edit_message_text("✍️ اكتب الرسالة:")
             return
 
         if action == "wallet":
             await query.edit_message_text(
-                "💰 **إدارة المحفظة**\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "اختر الإجراء:",
+                "💰 **إدارة المحفظة**",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("➕ إضافة رصيد", callback_data="adm#add_balance")],
                     [InlineKeyboardButton("📊 عرض الأرصدة", callback_data="adm#view_balances")],
                     [InlineKeyboardButton("🔙 رجوع", callback_data="adm#back")]
-                ]),
-                parse_mode='Markdown'
+                ])
             )
             return
 
         if action == "add_balance":
             context.user_data['awaiting_add_balance'] = True
-            await query.edit_message_text("✍️ اكتب: `آيدي_المستخدم|المبلغ`\nمثال: `8243108672|10`")
+            await query.edit_message_text("✍️ اكتب: `آيدي|المبلغ`")
             return
 
         if action == "view_balances":
@@ -465,84 +409,74 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(store_info, parse_mode='Markdown')
             return
 
-        if action == "phone":
-            await query.edit_message_text(
-                "📱 **إدارة شحن الهاتف**\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "اختر الإجراء:",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📊 عرض طلبات الشحن", callback_data="adm#view_phone_orders")],
-                    [InlineKeyboardButton("🔙 رجوع", callback_data="adm#back")]
-                ]),
-                parse_mode='Markdown'
-            )
+        if action == "charge_orders":
+            await query.edit_message_text("📱 **طلبات الشحن**\nقيد التطوير...")
             return
 
         if action == "bot_orders":
-            bot_orders = db.get("bot_orders", [])
-            if not bot_orders:
-                await query.edit_message_text("🤖 لا توجد طلبات بوتات حالياً.")
-            else:
-                orders_list = "🤖 **طلبات البوتات**\n━━━━━━━━━━━━━━━━━━━━\n"
-                for i, order in enumerate(bot_orders[:10], 1):
-                    orders_list += f"{i}. {order.get('user_name', 'مجهول')} - {order.get('server', 'غير محدد')}\n"
-            await query.edit_message_text(orders_list, parse_mode='Markdown')
+            await query.edit_message_text("🤖 **طلبات البوتات**\nقيد التطوير...")
+            return
+
+        if action == "refund_orders":
+            await query.edit_message_text("💰 **طلبات الاسترجاع**\nقيد التطوير...")
             return
 
         if action == "settings":
             rate = db.get('exchange_rate', 14500)
             maintenance = "🛑 معطل" if db.get('bot_maintenance', False) else "✅ شغال"
             await query.edit_message_text(
-                f"⚙️ **الإعدادات العامة**\n"
+                f"⚙️ **الإعدادات**\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"📈 سعر الصرف: 1$ = {rate:,} ل.س\n"
-                f"⚙️ حالة البوت: {maintenance}\n"
-                f"📝 ملاحظات الأدمن: {db.get('admin_notes', 'لا توجد ملاحظات')}",
+                f"⚙️ حالة البوت: {maintenance}",
                 parse_mode='Markdown'
             )
             return
 
         if action == "clean":
             db["orders"] = []
-            db["bot_orders"] = []
             save_db(db)
-            await query.edit_message_text("🧹 تم تنظيف جميع الطلبات والبيانات المؤقتة.")
+            await query.edit_message_text("🧹 تم التنظيف.")
             return
 
         if action == "backup":
             backup_data = json.dumps(db, indent=2, ensure_ascii=False)
-            await query.edit_message_text("💾 تم إنشاء نسخة احتياطية من قاعدة البيانات.")
+            await query.edit_message_text("💾 تم إنشاء نسخة احتياطية.")
             await context.bot.send_document(
                 chat_id=user_id,
                 document=('database_backup.json', backup_data.encode('utf-8')),
-                caption="📂 نسخة احتياطية من قاعدة البيانات"
+                caption="📂 نسخة احتياطية"
             )
             return
 
         if action == "back":
-            await query.edit_message_text("🛸 **لوحة التحكم الإدارية**", reply_markup=admin_panel, parse_mode='Markdown')
+            await query.edit_message_text("🛸 **لوحة التحكم**", reply_markup=admin_panel)
             return
 
         return
 
-    # ===== أزرار المتجر =====
+    # ============================================================
+    # ==================== أزرار المتجر ========================
+    # ============================================================
     if data == "store#games":
-        await query.edit_message_text("🎮 **اختر اللعبة:**", reply_markup=games_menu, parse_mode='Markdown')
+        await query.edit_message_text("🎮 **اختر اللعبة:**", reply_markup=games_menu)
         return
 
     if data == "store#cards":
-        await query.edit_message_text("🎟️ **اختر البطاقة:**", reply_markup=cards_menu, parse_mode='Markdown')
+        await query.edit_message_text("🎟️ **اختر البطاقة:**", reply_markup=cards_menu)
         return
 
     if data == "store#phone":
-        await query.edit_message_text("📱 **اختر شبكة الهاتف:**", reply_markup=phone_menu, parse_mode='Markdown')
+        await query.edit_message_text("📱 **اختر شبكة الهاتف:**", reply_markup=phone_menu)
         return
 
     if data == "store#back":
-        await query.edit_message_text("🛍️ **اختر القسم:**", reply_markup=store_menu, parse_mode='Markdown')
+        await query.edit_message_text("🛍️ **اختر القسم:**", reply_markup=store_menu)
         return
 
-    # ===== أزرار الألعاب =====
+    # ============================================================
+    # ==================== أزرار الألعاب ========================
+    # ============================================================
     if data.startswith("game#"):
         game_name = data.split('#')[1]
         items = db["custom_store"]["games"].get(game_name, [])
@@ -555,10 +489,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buttons.append([InlineKeyboardButton(item, callback_data=f"buy#game#{game_name}#{item}#{price}")])
         buttons.append([InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="store#games")])
         buttons.append([InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")])
-        await query.edit_message_text(f"🛒 **عروض {game_name}**", reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+        await query.edit_message_text(f"🛒 **عروض {game_name}**", reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    # ===== أزرار البطاقات =====
+    # ============================================================
+    # ==================== أزرار البطاقات =======================
+    # ============================================================
     if data.startswith("card#"):
         card_name = data.split('#')[1]
         full_name = f"🎟️ بطاقات {card_name}"
@@ -572,14 +508,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buttons.append([InlineKeyboardButton(item, callback_data=f"buy#card#{card_name}#{item}#{price}")])
         buttons.append([InlineKeyboardButton("🔙 رجوع للبطاقات", callback_data="store#cards")])
         buttons.append([InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")])
-        await query.edit_message_text(f"🛒 **عروض بطاقات {card_name}**", reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+        await query.edit_message_text(f"🛒 **عروض بطاقات {card_name}**", reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    # ===== الشراء =====
+    # ============================================================
+    # ==================== عملية الشراء ========================
+    # ============================================================
     if data.startswith("buy#"):
         parts = data.split('#')
         item_type = parts[1]
-        name = parts[2]
+        game_name = parts[2]
         item = parts[3]
         price = float(parts[4])
         balance = get_balance(user_id)
@@ -587,87 +525,199 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"❌ رصيدك (${balance:.2f}) لا يكفي!")
             return
         context.user_data['item_type'] = item_type
-        context.user_data['name'] = name
+        context.user_data['game_name'] = game_name
         context.user_data['item'] = item
         context.user_data['price'] = price
         context.user_data['awaiting_game_id'] = True
-        await query.edit_message_text("✍️ **أدخل الآيدي (ID) الخاص بك:**", parse_mode='Markdown')
+        await query.edit_message_text("✍️ **أدخل الآيدي (ID) الخاص بك:**")
         return
 
-    # ===== تأكيد الشراء =====
-    if data == "confirm_order":
-        if not context.user_data.get('awaiting_game_id') and context.user_data.get('action') != 'confirmed':
-            await query.edit_message_text("❌ لا يوجد طلب مؤكد!")
-            return
-        item = context.user_data.get('item')
-        price = context.user_data.get('price')
-        game_id = context.user_data.get('game_id')
-        balance = get_balance(user_id)
+    # ============================================================
+    # ==================== موافقة الأدمن على الشراء ============
+    # ============================================================
+    if data.startswith("order_accept"):
+        parts = data.split('#')
+        target_id = parts[1]
+        price = float(parts[2])
+        item = parts[3]
+        game_id = parts[4]
+        balance = get_balance(target_id)
         if balance < price:
-            await query.edit_message_text(f"❌ رصيدك غير كافٍ!")
+            await query.edit_message_text(f"❌ رصيد المستخدم غير كافٍ!")
             return
-        update_balance(user_id, -price)
-        context.user_data['awaiting_game_id'] = False
-        context.user_data['action'] = None
-        await query.edit_message_text(
-            f"✅ **تم الشراء بنجاح!**\n"
+        update_balance(target_id, -price)
+        await query.edit_message_text(f"✅ تم قبول الطلب وخصم ${price:.2f} من {target_id}")
+        await context.bot.send_message(
+            target_id,
+            f"✅ **تم قبول طلبك!**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🎁 المنتج: {item}\n"
             f"💰 المبلغ: ${price:.2f}\n"
-            f"🆔 الآيدي: {game_id}",
-            parse_mode='Markdown'
-        )
-        await context.bot.send_message(
-            ADMIN_CHANNEL_ID,
-            f"🛒 **طلب شراء جديد**\n"
+            f"🆔 الآيدي: {game_id}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 {update.effective_user.first_name}\n"
-            f"🆔 {user_id}\n"
-            f"🎁 {item}\n"
-            f"💰 ${price:.2f}\n"
-            f"🆔 الآيدي: {game_id}"
+            f"📦 **تعليمات الاسترداد:**\n"
+            f"1️⃣ اذهب إلى موقع midasbuy.com\n"
+            f"2️⃣ أدخل الآيدي والكود\n"
+            f"3️⃣ اضغط استرداد"
         )
         return
 
-    # ===== شحن الهاتف =====
+    if data.startswith("order_reject"):
+        target_id = data.split('#')[1]
+        await query.edit_message_text(f"❌ تم رفض الطلب")
+        await context.bot.send_message(target_id, "❌ عذراً، تم رفض طلبك.")
+        return
+
+    # ============================================================
+    # ==================== موافقة الأدمن على الاسترجاع =========
+    # ============================================================
+    if data.startswith("refund_accept"):
+        parts = data.split('#')
+        target_id = parts[1]
+        amount = float(parts[2])
+        update_balance(target_id, amount)
+        await query.edit_message_text(f"✅ تم قبول الاسترجاع وإضافة ${amount:.2f} إلى {target_id}")
+        await context.bot.send_message(target_id, f"✅ تم استرجاع ${amount:.2f} إلى محفظتك!")
+        return
+
+    if data.startswith("refund_reject"):
+        target_id = data.split('#')[1]
+        await query.edit_message_text(f"❌ تم رفض طلب الاسترجاع")
+        await context.bot.send_message(target_id, "❌ عذراً، تم رفض طلب استرجاع الأموال.")
+        return
+
+    # ============================================================
+    # ==================== شحن رصيد الهاتف ====================
+    # ============================================================
     if data.startswith("phone#"):
         card_type = data.split('#')[1]
         context.user_data['card_type'] = card_type.upper()
         context.user_data['awaiting_phone'] = True
-        await query.edit_message_text(f"✍️ **أدخل رقم الهاتف**\nالرجاء كتابة رقم الهاتف المراد شحنه ({card_type.upper()}):", parse_mode='Markdown')
+        await query.edit_message_text(f"✍️ **أدخل رقم الهاتف**\nالرجاء كتابة رقم الهاتف المراد شحنه ({card_type.upper()}):")
         return
 
-    # ===== شحن الرصيد =====
+    if context.user_data.get('awaiting_phone'):
+        phone = update.message.text
+        context.user_data['phone_number'] = phone
+        context.user_data['awaiting_phone'] = False
+        context.user_data['awaiting_phone_amount'] = True
+        await update.message.reply_text("✍️ اكتب المبلغ بالليرة:")
+        return
+
+    if context.user_data.get('awaiting_phone_amount'):
+        try:
+            amount = float(update.message.text)
+            if amount <= 0:
+                raise ValueError
+            rate = db.get('exchange_rate', 14500)
+            usd_amount = amount / rate
+            balance = get_balance(user_id)
+            if balance < usd_amount:
+                await update.message.reply_text(f"❌ رصيدك (${balance:.2f}) غير كافٍ!")
+                return
+            # إرسال طلب للأدمن
+            await context.bot.send_message(
+                ADMIN_CHANNEL_ID,
+                f"📱 **طلب شحن هاتف**\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 الزبون: {update.effective_user.first_name}\n"
+                f"📞 الهاتف: {context.user_data.get('phone_number')}\n"
+                f"📶 الشبكة: {context.user_data.get('card_type')}\n"
+                f"💰 المبلغ: {amount:,.0f} ل.س\n"
+                f"💵 الخصم: ${usd_amount:.2f}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ موافقة", callback_data=f"phone_accept#{user_id}#{usd_amount}#{amount}#{context.user_data.get('phone_number')}#{context.user_data.get('card_type')}")],
+                    [InlineKeyboardButton("❌ رفض", callback_data=f"phone_reject#{user_id}")]
+                ])
+            )
+            await update.message.reply_text("✅ تم إرسال طلب الشحن للإدارة.")
+            context.user_data['awaiting_phone_amount'] = False
+        except:
+            await update.message.reply_text("❌ اكتب رقماً صحيحاً!")
+        return
+
+    # ============================================================
+    # ==================== موافقة الأدمن على شحن الهاتف =======
+    # ============================================================
+    if data.startswith("phone_accept"):
+        parts = data.split('#')
+        target_id = parts[1]
+        usd_amount = float(parts[2])
+        syr_amount = float(parts[3])
+        phone = parts[4]
+        card_type = parts[5]
+        update_balance(target_id, -usd_amount)
+        await query.edit_message_text(f"✅ تم قبول طلب شحن الهاتف")
+        await context.bot.send_message(
+            target_id,
+            f"✅ **تم شحن هاتفك!**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📞 الهاتف: {phone}\n"
+            f"📶 الشبكة: {card_type}\n"
+            f"💰 المبلغ: {syr_amount:,.0f} ل.س"
+        )
+        return
+
+    if data.startswith("phone_reject"):
+        target_id = data.split('#')[1]
+        await query.edit_message_text(f"❌ تم رفض طلب الشحن")
+        await context.bot.send_message(target_id, "❌ عذراً، تم رفض طلب شحن الهاتف.")
+        return
+
+    # ============================================================
+    # ==================== شحن الرصيد ========================
+    # ============================================================
     if data.startswith("charge#"):
         currency = data.split('#')[1]
         context.user_data['charge_currency'] = currency
         context.user_data['awaiting_charge'] = True
-        await query.edit_message_text(f"✍️ **أدخل المبلغ**\nالرجاء كتابة المبلغ {currency if currency == 'usd' else 'بالليرة السورية'}:", parse_mode='Markdown')
+        await query.edit_message_text(f"✍️ **أدخل المبلغ**\nالرجاء كتابة المبلغ {currency if currency == 'usd' else 'بالليرة السورية'}:")
         return
 
-    # ===== استرجاع الأموال =====
+    # ============================================================
+    # ==================== استرجاع الأموال ====================
+    # ============================================================
     if data.startswith("refund#"):
         currency = data.split('#')[1]
         context.user_data['refund_currency'] = currency
         context.user_data['awaiting_refund'] = True
-        await query.edit_message_text(f"✍️ **أدخل المبلغ**\nالرجاء كتابة المبلغ {currency if currency == 'usd' else 'بالليرة السورية'} المراد استرجاعه:", parse_mode='Markdown')
+        await query.edit_message_text(f"✍️ **أدخل المبلغ**\nالرجاء كتابة المبلغ {currency if currency == 'usd' else 'بالليرة السورية'} المراد استرجاعه:")
         return
 
-    # ===== إنشاء بوت =====
+    # ============================================================
+    # ==================== إنشاء بوت ==========================
+    # ============================================================
     if data == "bot_order#start":
         context.user_data['awaiting_bot_desc'] = True
         await query.edit_message_text(
             "🤖 **إنشاء بوت جديد**\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "✍️ اكتب مواصفات البوت الذي تريده بالتفصيل:",
-            parse_mode='Markdown'
+            "✍️ اكتب مواصفات البوت الذي تريده:"
         )
         return
 
-    # ===== اختيار سيرفر البوت =====
+    if context.user_data.get('awaiting_bot_desc'):
+        desc = update.message.text
+        context.user_data['bot_desc'] = desc
+        context.user_data['awaiting_bot_desc'] = False
+        context.user_data['awaiting_bot_contact'] = True
+        await update.message.reply_text("✍️ أرسل رقم تواصلك:")
+        return
+
+    if context.user_data.get('awaiting_bot_contact'):
+        contact = update.message.text
+        context.user_data['bot_contact'] = contact
+        context.user_data['awaiting_bot_contact'] = False
+        server_btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔥 سيرفر قوي 24 ساعة (5$/شهر + أسبوع مجاناً)", callback_data="srv#strong")],
+            [InlineKeyboardButton("💤 سيرفر عادي 12-18 ساعة (2$/شهر)", callback_data="srv#normal")]
+        ])
+        await update.message.reply_text("🖥️ **اختر نوع السيرفر:**", reply_markup=server_btn)
+        return
+
     if data.startswith("srv#"):
         srv_type = data.split('#')[1]
-        srv_name = "🔥 قوي ومحمي 24 ساعة" if srv_type == 'strong' else "💤 عادي 12-18 ساعة"
+        srv_name = "🔥 قوي 24 ساعة (5$/شهر + أسبوع مجاناً)" if srv_type == 'strong' else "💤 عادي 12-18 ساعة (2$/شهر)"
         desc = context.user_data.get('bot_desc', 'غير محدد')
         contact = context.user_data.get('bot_contact', 'غير محدد')
         await query.edit_message_text("🚀 جاري إرسال الطلب للإدارة...")
@@ -679,37 +729,53 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🆔 المعرف: {user_id}\n"
             f"💬 التواصل: {contact}\n"
             f"📝 المواصفات: {desc}\n"
-            f"🖥️ السيرفر: {srv_name}"
+            f"🖥️ السيرفر: {srv_name}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💰 السعر", callback_data=f"bot_price#{user_id}")],
+                [InlineKeyboardButton("⏰ الوقت", callback_data=f"bot_time#{user_id}")],
+                [InlineKeyboardButton("📂 ملف", callback_data=f"bot_file#{user_id}")],
+                [InlineKeyboardButton("❌ رفض", callback_data=f"bot_reject#{user_id}")]
+            ])
         )
         context.user_data['awaiting_bot_desc'] = False
         context.user_data['awaiting_bot_contact'] = False
         return
 
-    # ===== أزرار طلب البوت (إدارة) =====
-    if data.startswith("bot#"):
-        parts = data.split('#')
-        action = parts[1]
-        target_id = parts[2]
+    # ============================================================
+    # ==================== أزرار طلب البوت (إدارة) ============
+    # ============================================================
+    if data.startswith("bot_price"):
+        target_id = data.split('#')[1]
         context.user_data['bot_target_id'] = target_id
-
-        if action == "price":
-            context.user_data['awaiting_bot_price'] = True
-            await query.edit_message_text(f"✍️ **أدخل السعر**\nالرجاء كتابة السعر للمستخدم {target_id}:")
-        elif action == "desc":
-            context.user_data['awaiting_bot_desc_admin'] = True
-            await query.edit_message_text(f"✍️ **وصف إضافي**\nالرجاء كتابة وصف إضافي للمستخدم {target_id}:")
-        elif action == "time":
-            context.user_data['awaiting_bot_time'] = True
-            await query.edit_message_text(f"✍️ **الوقت المتوقع**\nالرجاء كتابة الوقت المتوقع للمستخدم {target_id}:")
-        elif action == "file":
-            await query.edit_message_text(f"📤 **إرسال الملف**\nالرجاء إرسال ملف البوت للمستخدم {target_id}:")
+        context.user_data['awaiting_bot_price'] = True
+        await query.edit_message_text(f"✍️ اكتب السعر للمستخدم {target_id}:")
         return
 
-    # ===== العودة للقائمة الرئيسية =====
+    if data.startswith("bot_time"):
+        target_id = data.split('#')[1]
+        context.user_data['bot_target_id'] = target_id
+        context.user_data['awaiting_bot_time'] = True
+        await query.edit_message_text(f"✍️ اكتب الوقت المتوقع للمستخدم {target_id}:")
+        return
+
+    if data.startswith("bot_file"):
+        target_id = data.split('#')[1]
+        await query.edit_message_text(f"📤 أرسل ملف البوت للمستخدم {target_id}:")
+        return
+
+    if data.startswith("bot_reject"):
+        target_id = data.split('#')[1]
+        await query.edit_message_text(f"❌ تم رفض طلب البوت")
+        await context.bot.send_message(target_id, "❌ عذراً، تم رفض طلب إنشاء البوت.")
+        return
+
+    # ============================================================
+    # ==================== العودة للقائمة الرئيسية ============
+    # ============================================================
     if data == "main_menu":
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="🎯 **القائمة الرئيسية**\nاختر الخيار المناسب:",
+            text="🎯 **القائمة الرئيسية**",
             reply_markup=main_menu,
             parse_mode='Markdown'
         )
@@ -732,4 +798,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-                    
