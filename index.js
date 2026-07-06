@@ -59,12 +59,25 @@ const storeMenu = Markup.inlineKeyboard([
     [Markup.button.callback("🔙 القائمة الرئيسية", "main_menu")]
 ]);
 
+const walletMenu = Markup.inlineKeyboard([
+    [Markup.button.callback("💵 شحن بالدولار", "charge#usd")],
+    [Markup.button.callback("🇸🇾 شحن بالليرة", "charge#syr")],
+    [Markup.button.callback("🔙 القائمة الرئيسية", "main_menu")]
+]);
+
+const refundMenu = Markup.inlineKeyboard([
+    [Markup.button.callback("💵 استرجاع بالدولار", "refund#usd")],
+    [Markup.button.callback("🇸🇾 استرجاع بالليرة", "refund#syr")],
+    [Markup.button.callback("🔙 القائمة الرئيسية", "main_menu")]
+]);
+
 // ===== لوحة الإدارة =====
 const adminPanel = Markup.inlineKeyboard([
     [Markup.button.callback("📊 الإحصائيات", "adm#stats")],
     [Markup.button.callback("📢 إرسال إعلان", "adm#broadcast")],
     [Markup.button.callback("💰 إدارة المحفظة", "adm#wallet")],
     [Markup.button.callback("👥 المستخدمين", "adm#users")],
+    [Markup.button.callback("🎮 إدارة المتجر", "adm#store")],
     [Markup.button.callback("🔙 القائمة الرئيسية", "main_menu")]
 ]);
 
@@ -77,7 +90,7 @@ bot.command('admin', ctx => {
 bot.command('panel', ctx => {
     const uId = String(ctx.chat.id);
     if (userStates[uId]?.action === 'admin_dashboard' || uId === config.ADMIN_ID) {
-        return ctx.reply("🛸 لوحة التحكم", { reply_markup: adminPanel });
+        return ctx.reply("🛸 **لوحة التحكم**", { reply_markup: adminPanel });
     }
     ctx.reply("❌ ليس لديك صلاحية.");
 });
@@ -102,38 +115,10 @@ bot.start(async (ctx) => {
 });
 
 bot.hears('🏪 المتجر', ctx => ctx.reply("🛍️ اختر القسم:", storeMenu));
-
-bot.hears('💳 المحفظة', ctx => {
-    const uId = String(ctx.chat.id);
-    const rate = db.exchange_rate || 14500;
-    const usd = db.users[uId]?.balance_usd || 0;
-    ctx.reply(
-        `💳 **محفظتك**\n` +
-        `💰 الرصيد: $${usd.toFixed(2)}\n` +
-        `🇸🇾 بالليرة: ${(usd * rate).toLocaleString()} ل.س`,
-        { reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback("💵 شحن بالدولار", "charge#usd")],
-            [Markup.button.callback("🇸🇾 شحن بالليرة", "charge#syr")],
-            [Markup.button.callback("🔙 القائمة الرئيسية", "main_menu")]
-        ])}
-    );
-});
-
-bot.hears('💰 استرجاع الأموال', ctx => {
-    ctx.reply("💰 اختر عملة الاسترجاع:", Markup.inlineKeyboard([
-        [Markup.button.callback("💵 استرجاع بالدولار", "refund#usd")],
-        [Markup.button.callback("🇸🇾 استرجاع بالليرة", "refund#syr")],
-        [Markup.button.callback("🔙 القائمة الرئيسية", "main_menu")]
-    ]));
-});
-
-bot.hears('⚙️ الإعدادات', ctx => {
-    ctx.reply(`⚙️ **الإعدادات**\n👤 ${ctx.from.first_name}\n🆔 ${ctx.chat.id}`);
-});
-
-bot.hears('📞 الدعم الفني', ctx => {
-    ctx.reply(`📞 **الدعم الفني**\n${config.DEVELOPER_USERNAME}`);
-});
+bot.hears('💳 المحفظة', ctx => ctx.reply("💳 **المحفظة**", { reply_markup: walletMenu }));
+bot.hears('💰 استرجاع الأموال', ctx => ctx.reply("💰 **استرجاع الأموال**", { reply_markup: refundMenu }));
+bot.hears('⚙️ الإعدادات', ctx => ctx.reply(`⚙️ **الإعدادات**\n👤 ${ctx.from.first_name}\n🆔 ${ctx.chat.id}`));
+bot.hears('📞 الدعم الفني', ctx => ctx.reply(`📞 **الدعم الفني**\n${config.DEVELOPER_USERNAME}`));
 
 bot.hears('🤖 إنشاء بوت', ctx => {
     userStates[String(ctx.chat.id)] = { action: 'await_bot_desc' };
@@ -160,14 +145,23 @@ bot.on('callback_query', async (ctx) => {
             );
         }
         if (action === "back") {
-            return ctx.editMessageText("🛸 لوحة التحكم", { reply_markup: adminPanel });
+            return ctx.editMessageText("🛸 **لوحة التحكم**", { reply_markup: adminPanel });
         }
         if (action === "broadcast") {
             userStates[uId] = { action: 'await_broadcast' };
             return ctx.editMessageText("✍️ اكتب الرسالة التي تريد إرسالها لجميع المستخدمين:");
         }
         if (action === "wallet") {
-            return ctx.editMessageText("💰 إدارة المحفظة قيد التطوير...");
+            return ctx.editMessageText("💰 **إدارة المحفظة**\nاختر الإجراء:",
+                Markup.inlineKeyboard([
+                    [Markup.button.callback("➕ إضافة رصيد", "adm#add_balance")],
+                    [Markup.button.callback("🔙 رجوع", "adm#back")]
+                ])
+            );
+        }
+        if (action === "add_balance") {
+            userStates[uId] = { action: 'await_add_balance' };
+            return ctx.editMessageText("✍️ اكتب: `آيدي_المستخدم|المبلغ` (مثال: 8243108672|10)");
         }
         if (action === "users") {
             const users = db.users || {};
@@ -177,6 +171,14 @@ bot.on('callback_query', async (ctx) => {
                 count++;
                 list += `${count}. ${users[id].name} (${id}) - $${users[id].balance_usd || 0}\n`;
                 if (count >= 20) { list += `\n... و ${Object.keys(users).length - 20} آخرين`; break; }
+            }
+            return ctx.editMessageText(list);
+        }
+        if (action === "store") {
+            const games = db.custom_store.games || {};
+            let list = "🛒 **الأقسام**\n";
+            for (const cat in games) {
+                list += `📂 ${cat} (${games[cat].length} منتج)\n`;
             }
             return ctx.editMessageText(list);
         }
@@ -270,6 +272,35 @@ bot.on('callback_query', async (ctx) => {
         return ctx.reply(`✍️ اكتب المبلغ ${currency === 'usd' ? 'بالدولار' : 'بالليرة السورية'}:`);
     }
 
+    // ===== طلب بوت =====
+    if (data === "bot_order#start") {
+        userStates[uId] = { action: 'await_bot_desc' };
+        return ctx.reply("🤖 **إنشاء بوت**\n✍️ اكتب مواصفات البوت الذي تريده:");
+    }
+
+    // ===== أزرار طلب البوت من الأدمن =====
+    if (data.startsWith("bot#")) {
+        const parts = data.split('#');
+        const action = parts[1];
+        const clientId = parts[2];
+        if (action === "price") {
+            userStates[uId] = { action: 'await_bot_price', targetCustomerId: clientId };
+            return ctx.editMessageText(`✍️ اكتب السعر للمستخدم ${clientId}:`);
+        }
+        if (action === "desc") {
+            userStates[uId] = { action: 'await_bot_desc_admin', targetCustomerId: clientId };
+            return ctx.editMessageText(`✍️ اكتب وصف إضافي للمستخدم ${clientId}:`);
+        }
+        if (action === "time") {
+            userStates[uId] = { action: 'await_bot_time', targetCustomerId: clientId };
+            return ctx.editMessageText(`✍️ اكتب الوقت المتوقع للمستخدم ${clientId}:`);
+        }
+        if (action === "file") {
+            userStates[uId] = { action: 'await_bot_file', targetCustomerId: clientId };
+            return ctx.editMessageText(`📤 أرسل الملف للمستخدم ${clientId}:`);
+        }
+    }
+
     // ===== العودة للقائمة =====
     if (data === "main_menu") {
         return ctx.editMessageText("🎯 **القائمة الرئيسية**", { reply_markup: mainMenu });
@@ -307,6 +338,22 @@ bot.on('text', async (ctx) => {
             } catch(e) {}
         }
         return ctx.reply(`✅ تم إرسال الإعلان إلى ${count} مستخدم.`);
+    }
+
+    // ===== إضافة رصيد (أدمن) =====
+    if (state.action === 'await_add_balance') {
+        const parts = ctx.message.text.split('|');
+        if (parts.length !== 2) return ctx.reply("❌ الصيغة غير صحيحة! استخدم: `آيدي_المستخدم|المبلغ`");
+        const targetId = parts[0].trim();
+        const amount = parseFloat(parts[1].trim());
+        if (isNaN(amount) || amount <= 0) return ctx.reply("❌ المبلغ غير صحيح!");
+        if (!db.users[targetId]) return ctx.reply("❌ المستخدم غير موجود!");
+        db.users[targetId].balance_usd = (db.users[targetId].balance_usd || 0) + amount;
+        save();
+        userStates[uId] = null;
+        await ctx.reply(`✅ تم إضافة $${amount} إلى ${db.users[targetId].name}`);
+        await bot.telegram.sendMessage(targetId, `🎉 تم إضافة $${amount} إلى محفظتك!`).catch(() => {});
+        return;
     }
 
     // ===== كتابة الآيدي =====
