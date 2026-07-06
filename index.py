@@ -35,7 +35,7 @@ def load_db():
                 "games": {
                     "🎮 ببجي موبايل": ["60 شدة - 1.20$", "325 شدة - 5.00$", "660 شدة - 10.00$", "1800 شدة - 25.00$"],
                     "🔥 فري فاير": ["100 دايموند - 2.00$", "200 دايموند - 4.00$", "400 دايموند - 7.00$"],
-                    "🎮 روبلوكس": ["100 روبوكس - 1.50$", "500 روبوكس - 6.00$", "1000 روبوكس - 11.00$"]
+                    "🎮 روبلوكس": ["100 روبوكس - 1.50$", "500 روبوكس - 6.00$", "1000 روبوك스 - 11.00$"]
                 },
                 "cards": {
                     "🎟️ بطاقات ستيم": ["فئة 5$ - 5.50$", "فئة 10$ - 11.00$"],
@@ -60,14 +60,16 @@ def update_balance(user_id, amount):
     db["users"][uid]["balance_usd"] = db["users"][uid].get("balance_usd", 0) + amount
     save_db(db)
 
-# ==================== القوائم الرئيسية ====================
+def is_admin(user_id):
+    return str(user_id) == ADMIN_ID
+
+# ==================== القوائم ====================
 main_menu = ReplyKeyboardMarkup([
     ['🏪 المتجر', '🤖 إنشاء بوت'],
     ['💳 المحفظة', '💰 استرجاع الأموال'],
     ['⚙️ الإعدادات', '📞 الدعم الفني']
 ], resize_keyboard=True)
 
-# ==================== قوائم المتجر ====================
 store_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("🎮 قسم الألعاب", callback_data="store#games")],
     [InlineKeyboardButton("🎟️ قسم البطاقات", callback_data="store#cards")],
@@ -75,7 +77,6 @@ store_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]
 ])
 
-# ✅ تم إصلاح أسماء الأزرار لتطابق مفاتيح القاموس بالضبط (مع الإيموجي)
 games_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("🎮 ببجي موبايل", callback_data="game#🎮 ببجي موبايل")],
     [InlineKeyboardButton("🔥 فري فاير", callback_data="game#🔥 فري فاير")],
@@ -98,7 +99,6 @@ phone_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]
 ])
 
-# ==================== قوائم المحفظة والاسترجاع ====================
 wallet_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("💵 شحن بالدولار", callback_data="charge#usd")],
     [InlineKeyboardButton("🇸🇾 شحن بالليرة", callback_data="charge#syr")],
@@ -111,7 +111,6 @@ refund_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]
 ])
 
-# ==================== لوحة التحكم الإدارية (ضخمة) ====================
 admin_panel = InlineKeyboardMarkup([
     [InlineKeyboardButton("📊 الإحصائيات", callback_data="adm#stats")],
     [InlineKeyboardButton("📢 إرسال إعلان", callback_data="adm#broadcast")],
@@ -163,13 +162,40 @@ async def panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ ليس لديك صلاحية للدخول.")
 
-# ==================== معالج الرسائل النصية ====================
+# ==================== معالج النصوص ====================
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     text = update.message.text
     db = load_db()
 
-    # ===== كلمة السر =====
+    # ===== أزرار القائمة الرئيسية (المشكلة الأساسية) =====
+    if text == '🏪 المتجر':
+        await update.message.reply_text("🛍️ اختر القسم:", reply_markup=store_menu)
+        return
+
+    if text == '💳 المحفظة':
+        balance = get_balance(user_id)
+        await update.message.reply_text(f"💳 **رصيدك الحالي:**\n💰 ${balance:.2f}", reply_markup=wallet_menu, parse_mode='Markdown')
+        return
+
+    if text == '💰 استرجاع الأموال':
+        await update.message.reply_text("💰 اختر عملة الاسترجاع:", reply_markup=refund_menu)
+        return
+
+    if text == '🤖 إنشاء بوت':
+        context.user_data['awaiting_bot_desc'] = True
+        await update.message.reply_text("🤖 اكتب مواصفات البوت الذي تريده:")
+        return
+
+    if text == '⚙️ الإعدادات':
+        await update.message.reply_text(f"⚙️ **الإعدادات**\n👤 {update.effective_user.first_name}\n🆔 `{user_id}`", parse_mode='Markdown')
+        return
+
+    if text == '📞 الدعم الفني':
+        await update.message.reply_text(f"📞 **الدعم الفني**\n{DEVELOPER_USERNAME}", parse_mode='Markdown')
+        return
+
+    # ===== باقي المعالجات (كلمة السر، شحن، إلخ) =====
     if context.user_data.get('awaiting_password'):
         if text == ADMIN_PASSWORD:
             context.user_data['admin_dashboard'] = True
@@ -180,7 +206,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ كلمة سر خاطئة!")
         return
 
-    # ===== إرسال إعلان =====
     if context.user_data.get('awaiting_broadcast'):
         context.user_data['awaiting_broadcast'] = False
         await update.message.reply_text("🚀 جاري الإرسال...")
@@ -194,7 +219,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ تم إرسال الإعلان إلى {count} مستخدم.")
         return
 
-    # ===== إضافة رصيد (أدمن) =====
     if context.user_data.get('awaiting_add_balance'):
         try:
             parts = text.split('|')
@@ -216,7 +240,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم: `آيدي|المبلغ`")
         return
 
-    # ===== كتابة الآيدي =====
     if context.user_data.get('awaiting_game_id'):
         context.user_data['game_id'] = text
         context.user_data['action'] = 'confirmed'
@@ -238,7 +261,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== شحن الرصيد =====
     if context.user_data.get('awaiting_charge'):
         try:
             amount = float(text)
@@ -255,7 +277,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ اكتب رقماً صحيحاً!")
         return
 
-    # ===== استرجاع الأموال =====
     if context.user_data.get('awaiting_refund'):
         try:
             amount = float(text)
@@ -284,7 +305,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ اكتب رقماً صحيحاً!")
         return
 
-    # ===== شحن رصيد الهاتف =====
     if context.user_data.get('awaiting_phone'):
         context.user_data['phone_number'] = text
         context.user_data['awaiting_phone'] = False
@@ -321,7 +341,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ اكتب رقماً صحيحاً!")
         return
 
-    # ===== إنشاء بوت =====
     if context.user_data.get('awaiting_bot_desc'):
         context.user_data['bot_desc'] = text
         context.user_data['awaiting_bot_desc'] = False
@@ -339,7 +358,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🖥️ **اختر نوع السيرفر:**", reply_markup=server_btn)
         return
 
-    # ===== طلب بوت (من الأدمن) =====
     if context.user_data.get('awaiting_bot_price'):
         target_id = context.user_data.get('bot_target_id')
         if target_id:
@@ -367,7 +385,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== أي رسالة أخرى =====
     await update.message.reply_text("⚠️ لم أفهم طلبك، استخدم الأزرار من القائمة.")
 
-# ==================== معالج الأزرار ====================
+# ==================== معالج الأزرار (الكولباك) ====================
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -375,9 +393,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     db = load_db()
 
-    # ============================================================
-    # ==================== أزرار الإدارة ========================
-    # ============================================================
+    # ===== أزرار الإدارة =====
     if data.startswith("adm#"):
         action = data.split('#')[1]
 
@@ -396,12 +412,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📈 متوسط الرصيد: ${(total_balance / (total_users or 1)):.2f}",
                 parse_mode='Markdown'
             )
+            return
 
-        elif action == "broadcast":
+        if action == "broadcast":
             context.user_data['awaiting_broadcast'] = True
             await query.edit_message_text("✍️ اكتب الرسالة التي تريد إرسالها لجميع المستخدمين:")
+            return
 
-        elif action == "wallet":
+        if action == "wallet":
             await query.edit_message_text(
                 "💰 **إدارة المحفظة**\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
@@ -413,24 +431,28 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]),
                 parse_mode='Markdown'
             )
+            return
 
-        elif action == "add_balance":
+        if action == "add_balance":
             context.user_data['awaiting_add_balance'] = True
             await query.edit_message_text("✍️ اكتب: `آيدي_المستخدم|المبلغ`\nمثال: `8243108672|10`")
+            return
 
-        elif action == "view_balances":
+        if action == "view_balances":
             users_list = "💰 **الأرصدة**\n━━━━━━━━━━━━━━━━━━━━\n"
             for uid, info in list(db["users"].items())[:20]:
                 users_list += f"👤 {info.get('name', 'مجهول')} (${info.get('balance_usd', 0):.2f})\n"
             await query.edit_message_text(users_list, parse_mode='Markdown')
+            return
 
-        elif action == "users":
+        if action == "users":
             users_list = "👥 **المستخدمين**\n━━━━━━━━━━━━━━━━━━━━\n"
             for uid, info in list(db["users"].items())[:20]:
                 users_list += f"{uid}. {info.get('name', 'مجهول')} - ${info.get('balance_usd', 0):.2f}\n"
             await query.edit_message_text(users_list, parse_mode='Markdown')
+            return
 
-        elif action == "store":
+        if action == "store":
             games = db["custom_store"]["games"]
             cards = db["custom_store"]["cards"]
             store_info = "🛒 **إدارة المتجر**\n━━━━━━━━━━━━━━━━━━━━\n"
@@ -441,8 +463,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for name in cards:
                 store_info += f"  📂 {name} ({len(cards[name])} منتج)\n"
             await query.edit_message_text(store_info, parse_mode='Markdown')
+            return
 
-        elif action == "phone":
+        if action == "phone":
             await query.edit_message_text(
                 "📱 **إدارة شحن الهاتف**\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
@@ -453,8 +476,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]),
                 parse_mode='Markdown'
             )
+            return
 
-        elif action == "bot_orders":
+        if action == "bot_orders":
             bot_orders = db.get("bot_orders", [])
             if not bot_orders:
                 await query.edit_message_text("🤖 لا توجد طلبات بوتات حالياً.")
@@ -462,9 +486,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 orders_list = "🤖 **طلبات البوتات**\n━━━━━━━━━━━━━━━━━━━━\n"
                 for i, order in enumerate(bot_orders[:10], 1):
                     orders_list += f"{i}. {order.get('user_name', 'مجهول')} - {order.get('server', 'غير محدد')}\n"
-                await query.edit_message_text(orders_list, parse_mode='Markdown')
+            await query.edit_message_text(orders_list, parse_mode='Markdown')
+            return
 
-        elif action == "settings":
+        if action == "settings":
             rate = db.get('exchange_rate', 14500)
             maintenance = "🛑 معطل" if db.get('bot_maintenance', False) else "✅ شغال"
             await query.edit_message_text(
@@ -475,14 +500,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📝 ملاحظات الأدمن: {db.get('admin_notes', 'لا توجد ملاحظات')}",
                 parse_mode='Markdown'
             )
+            return
 
-        elif action == "clean":
+        if action == "clean":
             db["orders"] = []
             db["bot_orders"] = []
             save_db(db)
             await query.edit_message_text("🧹 تم تنظيف جميع الطلبات والبيانات المؤقتة.")
+            return
 
-        elif action == "backup":
+        if action == "backup":
             backup_data = json.dumps(db, indent=2, ensure_ascii=False)
             await query.edit_message_text("💾 تم إنشاء نسخة احتياطية من قاعدة البيانات.")
             await context.bot.send_document(
@@ -490,31 +517,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 document=('database_backup.json', backup_data.encode('utf-8')),
                 caption="📂 نسخة احتياطية من قاعدة البيانات"
             )
+            return
 
-        elif action == "back":
+        if action == "back":
             await query.edit_message_text("🛸 **لوحة التحكم الإدارية**", reply_markup=admin_panel, parse_mode='Markdown')
+            return
 
         return
 
-    # ============================================================
-    # ==================== أزرار المتجر ========================
-    # ============================================================
+    # ===== أزرار المتجر =====
     if data == "store#games":
         await query.edit_message_text("🎮 **اختر اللعبة:**", reply_markup=games_menu, parse_mode='Markdown')
+        return
 
-    elif data == "store#cards":
+    if data == "store#cards":
         await query.edit_message_text("🎟️ **اختر البطاقة:**", reply_markup=cards_menu, parse_mode='Markdown')
+        return
 
-    elif data == "store#phone":
+    if data == "store#phone":
         await query.edit_message_text("📱 **اختر شبكة الهاتف:**", reply_markup=phone_menu, parse_mode='Markdown')
+        return
 
-    elif data == "store#back":
+    if data == "store#back":
         await query.edit_message_text("🛍️ **اختر القسم:**", reply_markup=store_menu, parse_mode='Markdown')
+        return
 
-    # ============================================================
-    # ==================== أزرار الألعاب ========================
-    # ============================================================
-    elif data.startswith("game#"):
+    # ===== أزرار الألعاب =====
+    if data.startswith("game#"):
         game_name = data.split('#')[1]
         items = db["custom_store"]["games"].get(game_name, [])
         if not items:
@@ -527,11 +556,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons.append([InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="store#games")])
         buttons.append([InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")])
         await query.edit_message_text(f"🛒 **عروض {game_name}**", reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+        return
 
-    # ============================================================
-    # ==================== أزرار البطاقات =======================
-    # ============================================================
-    elif data.startswith("card#"):
+    # ===== أزرار البطاقات =====
+    if data.startswith("card#"):
         card_name = data.split('#')[1]
         full_name = f"🎟️ بطاقات {card_name}"
         items = db["custom_store"]["cards"].get(full_name, [])
@@ -545,11 +573,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons.append([InlineKeyboardButton("🔙 رجوع للبطاقات", callback_data="store#cards")])
         buttons.append([InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")])
         await query.edit_message_text(f"🛒 **عروض بطاقات {card_name}**", reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+        return
 
-    # ============================================================
-    # ==================== عملية الشراء ========================
-    # ============================================================
-    elif data.startswith("buy#"):
+    # ===== الشراء =====
+    if data.startswith("buy#"):
         parts = data.split('#')
         item_type = parts[1]
         name = parts[2]
@@ -565,11 +592,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['price'] = price
         context.user_data['awaiting_game_id'] = True
         await query.edit_message_text("✍️ **أدخل الآيدي (ID) الخاص بك:**", parse_mode='Markdown')
+        return
 
-    # ============================================================
-    # ==================== تأكيد الشراء ========================
-    # ============================================================
-    elif data == "confirm_order":
+    # ===== تأكيد الشراء =====
+    if data == "confirm_order":
         if not context.user_data.get('awaiting_game_id') and context.user_data.get('action') != 'confirmed':
             await query.edit_message_text("❌ لا يوجد طلب مؤكد!")
             return
@@ -601,38 +627,34 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 ${price:.2f}\n"
             f"🆔 الآيدي: {game_id}"
         )
+        return
 
-    # ============================================================
-    # ==================== شحن رصيد الهاتف ====================
-    # ============================================================
-    elif data.startswith("phone#"):
+    # ===== شحن الهاتف =====
+    if data.startswith("phone#"):
         card_type = data.split('#')[1]
         context.user_data['card_type'] = card_type.upper()
         context.user_data['awaiting_phone'] = True
         await query.edit_message_text(f"✍️ **أدخل رقم الهاتف**\nالرجاء كتابة رقم الهاتف المراد شحنه ({card_type.upper()}):", parse_mode='Markdown')
+        return
 
-    # ============================================================
-    # ==================== شحن الرصيد ========================
-    # ============================================================
-    elif data.startswith("charge#"):
+    # ===== شحن الرصيد =====
+    if data.startswith("charge#"):
         currency = data.split('#')[1]
         context.user_data['charge_currency'] = currency
         context.user_data['awaiting_charge'] = True
         await query.edit_message_text(f"✍️ **أدخل المبلغ**\nالرجاء كتابة المبلغ {currency if currency == 'usd' else 'بالليرة السورية'}:", parse_mode='Markdown')
+        return
 
-    # ============================================================
-    # ==================== استرجاع الأموال ====================
-    # ============================================================
-    elif data.startswith("refund#"):
+    # ===== استرجاع الأموال =====
+    if data.startswith("refund#"):
         currency = data.split('#')[1]
         context.user_data['refund_currency'] = currency
         context.user_data['awaiting_refund'] = True
         await query.edit_message_text(f"✍️ **أدخل المبلغ**\nالرجاء كتابة المبلغ {currency if currency == 'usd' else 'بالليرة السورية'} المراد استرجاعه:", parse_mode='Markdown')
+        return
 
-    # ============================================================
-    # ==================== إنشاء بوت ==========================
-    # ============================================================
-    elif data == "bot_order#start":
+    # ===== إنشاء بوت =====
+    if data == "bot_order#start":
         context.user_data['awaiting_bot_desc'] = True
         await query.edit_message_text(
             "🤖 **إنشاء بوت جديد**\n"
@@ -640,11 +662,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✍️ اكتب مواصفات البوت الذي تريده بالتفصيل:",
             parse_mode='Markdown'
         )
+        return
 
-    # ============================================================
-    # ==================== اختيار سيرفر البوت =================
-    # ============================================================
-    elif data.startswith("srv#"):
+    # ===== اختيار سيرفر البوت =====
+    if data.startswith("srv#"):
         srv_type = data.split('#')[1]
         srv_name = "🔥 قوي ومحمي 24 ساعة" if srv_type == 'strong' else "💤 عادي 12-18 ساعة"
         desc = context.user_data.get('bot_desc', 'غير محدد')
@@ -662,11 +683,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         context.user_data['awaiting_bot_desc'] = False
         context.user_data['awaiting_bot_contact'] = False
+        return
 
-    # ============================================================
-    # ==================== أزرار طلب البوت (إدارة) ============
-    # ============================================================
-    elif data.startswith("bot#"):
+    # ===== أزرار طلب البوت (إدارة) =====
+    if data.startswith("bot#"):
         parts = data.split('#')
         action = parts[1]
         target_id = parts[2]
@@ -683,21 +703,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"✍️ **الوقت المتوقع**\nالرجاء كتابة الوقت المتوقع للمستخدم {target_id}:")
         elif action == "file":
             await query.edit_message_text(f"📤 **إرسال الملف**\nالرجاء إرسال ملف البوت للمستخدم {target_id}:")
+        return
 
-    # ============================================================
-    # ==================== العودة للقائمة الرئيسية ============
-    # ✅ تم إصلاحها: لا يمكن استخدام edit_message_text مع ReplyKeyboardMarkup
-    # ============================================================
-    elif data == "main_menu":
+    # ===== العودة للقائمة الرئيسية =====
+    if data == "main_menu":
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="🎯 **القائمة الرئيسية**\nاختر الخيار المناسب:",
             reply_markup=main_menu,
             parse_mode='Markdown'
         )
+        return
 
-    else:
-        await query.edit_message_text("⚠️ هذا الزر غير مفعل حالياً.")
+    await query.edit_message_text("⚠️ هذا الزر غير مفعل حالياً.")
 
 # ==================== تشغيل البوت ====================
 def main():
@@ -708,7 +726,6 @@ def main():
     app.add_handler(CommandHandler("panel", panel_command))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_text))
 
     print("🚀 البوت شغال بالبايثون!")
     app.run_polling()
