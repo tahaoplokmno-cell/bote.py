@@ -251,7 +251,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_chat.id) == ADMIN_CHANNEL_ID:
         await notify_admin_dm(context,"⚠️ **انتبه:** كتبت رداً داخل القناة نفسها ولن يصل للزبون!\nالرجاء الرد **هنا في هذه المحادثة الخاصة معي** وليس داخل القناة.")
-        async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
     user_id = str(update.effective_user.id); text = update.message.text; db = load_db(); ud = context.user_data
     if user_id in db.get("banned",{}) and not is_admin(db,user_id): await update.message.reply_text("🚫 حسابك محظور من استخدام هذا البوت."); return
@@ -515,7 +515,8 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"✅ تم إرسال الملف (نص) إلى {target_id} وتم حفظه لطلب `{order_id}` لإعادة الإرسال لاحقاً."); return
 
     await update.message.reply_text("⚠️ لم أفهم طلبك، استخدم الأزرار من القائمة. (أو اضغط /cancel)",reply_markup=CANCEL_BTN)
-    async def handle_photo_and_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def handle_photo_and_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
     user_id=str(update.effective_user.id); db=load_db(); ud=context.user_data
 
@@ -869,4 +870,3 @@ def main():
 
 if __name__=="__main__":
     main()
-    
