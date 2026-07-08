@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 import string
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, BufferedInputFile
@@ -134,7 +135,7 @@ def load_db():
         "catalog": default_catalog(), "catalog_roots": default_roots(),
         "next_node_seq": 100, "authenticated_admins": [],
         "stats": {"purchases": 0, "refunds": 0, "deposits": 0, "complaints": 0},
-        "activity_log": []
+        "activity_log": [], "bot_orders": {}
     }
     for k, v in defaults.items():
         if k not in data:
@@ -236,10 +237,17 @@ support_menu = InlineKeyboardMarkup([
     [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="main_menu")]
 ])
 
+CANCEL_BTN = InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء العملية", callback_data="cancel_flow")]])
+
 admin_panel = InlineKeyboardMarkup([
     [InlineKeyboardButton("📊 الإحصائيات الشاملة", callback_data="adm#stats")],
     [InlineKeyboardButton("📋 آخر العمليات", callback_data="adm#log")],
     [InlineKeyboardButton("📦 الطلبات المعلقة الآن", callback_data="adm#pending_list")],
+    [InlineKeyboardButton("🤖 بحث عن طلب بوت", callback_data="adm#search_bot_order")],
+    [InlineKeyboardButton("🛠️ وضع الصيانة تشغيل/إيقاف", callback_data="adm#toggle_maintenance")],
+    [InlineKeyboardButton("📝 ملاحظات الإدارة", callback_data="adm#admin_notes")],
+    [InlineKeyboardButton("👮 قائمة الأدمنية", callback_data="adm#list_admins")],
+    [InlineKeyboardButton("📤 تصدير كل المستخدمين", callback_data="adm#export_users")],
     [InlineKeyboardButton("📢 إرسال إعلان", callback_data="adm#broadcast")],
     [InlineKeyboardButton("👥 المستخدمين", callback_data="adm#users"),
      InlineKeyboardButton("📊 الأرصدة", callback_data="adm#view_balances")],
@@ -353,10 +361,12 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
     user_id = str(update.effective_user.id)
     context.user_data.clear()
+    await update.message.reply_text("✅ تم إلغاء أي عملية معلقة.", reply_markup=main_menu)
     if is_admin(db, user_id):
-        await update.message.reply_text("✅ تم إلغاء أي عملية معلقة. استخدم /panel للعودة للوحة التحكم.", reply_markup=main_menu)
-    else:
-        await update.message.reply_text("✅ تم إلغاء أي عملية معلقة.", reply_markup=main_menu)
+        await update.message.reply_text(
+            "لديك صلاحية أدمن. إن أردت فتح لوحة التحكم اضغط الزر:",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛸 فتح لوحة التحكم", callback_data="open_panel")]])
+        )
 
 
 async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -381,8 +391,33 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 حسابك محظور من استخدام هذا البوت.")
         return
 
+    if db.get("bot_maintenance", False) and not is_admin(db, user_id):
+        await update.message.reply_text("🛠️ البوت حالياً في وضع الصيانة، الرجاء المحاولة لاحقاً. نعتذر عن الإزعاج 🙏")
+        return
+
     if ud.get('awaiting_charge_proof'):
-        await update.message.reply_text("📸 نحتاج **صورة** إثبات الدفع فعلياً، ليس نصاً. أرسل صورة الوصل، أو /cancel للإلغاء.", parse_mode='Markdown')
+        # نقبل رقم/مرجع العملية كنص بديل عن الصورة (بعض المحافظ لا تسمح بلقطة شاشة)
+        amount = ud.get('charge_amount')
+        usd_amount = ud.get('charge_usd_amount')
+        currency = ud.get('charge_currency', 'usd')
+        order_id = generate_order_id()
+        db['pending_orders'][order_id] = {"type": "charge", "user_id": user_id, "usd_amount": usd_amount,
+                                           "amount": amount, "currency": currency, "ref": text}
+        save_db(db)
+        await context.bot.send_message(
+            ADMIN_CHANNEL_ID,
+            f"🏦 **طلب شحن رصيد (برقم العملية)**\n━━━━━━━━━━━━━━━━━━━━\n📋 رقم الطلب: {order_id}\n"
+            f"👤 {update.effective_user.first_name}\n🆔 {user_id}\n"
+            f"💰 {amount} {'$' if currency=='usd' else 'ل.س'} = **${usd_amount:.2f}**\n"
+            f"🧾 رقم/مرجع العملية: {text}",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ قبول وإضافة الرصيد", callback_data=f"charge_ok#{order_id}")],
+                [InlineKeyboardButton("❌ رفض", callback_data=f"charge_no#{order_id}")]
+            ])
+        )
+        ud['awaiting_charge_proof'] = False
+        await update.message.reply_text(f"🚀 تم إرسال طلب الشحن (رقم {order_id}) للإدارة.\nℹ️ يمكنك أيضاً إرسال صورة الوصل بدلاً من رقم العملية إن أردت.")
         return
 
     if text == '🏪 المتجر':
@@ -398,7 +433,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == '🤖 إنشاء بوت':
         clear_awaiting(ud)
         ud['awaiting_bot_desc'] = True
-        await update.message.reply_text("🤖 اكتب مواصفات البوت الذي تريده:")
+        await update.message.reply_text("🤖 اكتب مواصفات البوت الذي تريده:", reply_markup=CANCEL_BTN)
         return
     if text == '⚙️ الإعدادات':
         await update.message.reply_text(f"⚙️ **الإعدادات**\n👤 {update.effective_user.first_name}\n🆔 `{user_id}`", parse_mode='Markdown')
@@ -474,7 +509,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ تم إضافة ${amount} إلى {db['users'][target_id]['name']}")
             await context.bot.send_message(target_id, f"🎉 تم إضافة ${amount} إلى محفظتك!")
         except:
-            await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم: `آيدي|المبلغ` — حاول مجدداً أو أرسل /cancel للإلغاء.", parse_mode='Markdown')
+            await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم: `آيدي|المبلغ` — حاول مجدداً ", parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
         ud['awaiting_add_balance'] = False
         return
@@ -491,7 +526,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ تم خصم ${amount} من {db['users'][target_id]['name']}")
             await context.bot.send_message(target_id, f"⚠️ تم خصم ${amount} من محفظتك من قبل الإدارة.")
         except:
-            await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم: `آيدي|المبلغ` — حاول مجدداً أو أرسل /cancel للإلغاء.", parse_mode='Markdown')
+            await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم: `آيدي|المبلغ` — حاول مجدداً ", parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
         ud['awaiting_sub_balance'] = False
         return
@@ -499,7 +534,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ud.get('awaiting_ban_user'):
         target_id = text.strip()
         if target_id not in db["users"]:
-            await update.message.reply_text("❌ لا يوجد مستخدم بهذا المعرف. حاول مجدداً أو أرسل /cancel.")
+            await update.message.reply_text("❌ لا يوجد مستخدم بهذا المعرف. حاول مجدداً أو اضغط الزر أدناه للإلغاء.", reply_markup=CANCEL_BTN)
             return
         db.setdefault("banned", {})[target_id] = True
         log_activity(db, f"حظر المستخدم {target_id}")
@@ -530,6 +565,38 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown')
         return
 
+    if ud.get('awaiting_search_bot_order'):
+        query_val = text.strip()
+        ud['awaiting_search_bot_order'] = False
+        bot_orders = db.get('bot_orders', {})
+        found = []
+        if query_val in bot_orders:
+            found = [(query_val, bot_orders[query_val])]
+        else:
+            found = [(oid, o) for oid, o in bot_orders.items() if o.get('user_id') == query_val]
+        if not found:
+            await update.message.reply_text("❌ لم يتم إيجاد أي طلب بوت بهذا المعرف.")
+            return
+        for oid, o in found[:5]:
+            price_txt = f"${o['price']:.2f}" if o.get('price') is not None else "غير محدد"
+            msg = (
+                f"🤖 **طلب بوت** `{oid}`\n👤 الزبون: `{o.get('user_id')}`\n💬 التواصل: {o.get('contact')}\n"
+                f"📝 الوصف: {o.get('desc')}\n🖥️ السيرفر: {o.get('srv_name')}\n💰 السعر: {price_txt}\n"
+                f"📌 الحالة: {o.get('status')}\n🗒️ التفاصيل المحفوظة:\n{o.get('details') or 'لا يوجد'}"
+            )
+            buttons = []
+            if o.get('file_id'):
+                buttons.append([InlineKeyboardButton("📂 إعادة إرسال الملف للزبون", callback_data=f"resend_botfile#{oid}")])
+            await update.message.reply_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
+        return
+
+    if ud.get('awaiting_admin_notes'):
+        db['admin_notes'] = text
+        save_db(db)
+        ud['awaiting_admin_notes'] = False
+        await update.message.reply_text("✅ تم تحديث ملاحظات الإدارة.")
+        return
+
     if ud.get('awaiting_new_rate'):
         try:
             r = float(text)
@@ -539,7 +606,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_db(db)
             await update.message.reply_text(f"✅ تم تعديل سعر الصرف إلى {r:,} ل.س")
         except:
-            await update.message.reply_text("❌ اكتب رقماً صحيحاً! أو أرسل /cancel للإلغاء.")
+            await update.message.reply_text("❌ اكتب رقماً صحيحاً! ", reply_markup=CANCEL_BTN)
             return
         ud['awaiting_new_rate'] = False
         return
@@ -562,7 +629,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_db(db)
             await update.message.reply_text(f"✅ تم إضافة القسم [{name}] بمعرف `{nid}`", parse_mode='Markdown')
         except:
-            await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم:\n`parent_id_او_root|games_او_cards_او_numbers|الاسم`\nأو /cancel للإلغاء.", parse_mode='Markdown')
+            await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم:\n`parent_id_او_root|games_او_cards_او_numbers|الاسم`.", parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
         ud['awaiting_add_category'] = False
         return
@@ -581,7 +648,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_db(db)
             await update.message.reply_text(f"✅ تم إضافة المنتج [{name}] بمعرف `{nid}`", parse_mode='Markdown')
         except:
-            await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم:\n`parent_id|kind|الاسم|السعر`\nkind: game_code / card / whatsapp_number / telegram_number\nأو /cancel للإلغاء.", parse_mode='Markdown')
+            await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم:\n`parent_id|kind|الاسم|السعر`\nkind: game_code / card / whatsapp_number / telegram_number.", parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
         ud['awaiting_add_product'] = False
         return
@@ -598,7 +665,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_db(db)
             await update.message.reply_text(f"✅ تم تعديل سعر `{nid}` إلى {price}$ وتفعيله.", parse_mode='Markdown')
         except:
-            await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم: `node_id|السعر_الجديد` أو /cancel للإلغاء.", parse_mode='Markdown')
+            await update.message.reply_text("❌ الصيغة غير صحيحة! استخدم: `node_id|السعر_الجديد`.", parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
         ud['awaiting_edit_price'] = False
         return
@@ -607,7 +674,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nid = text.strip()
         node = db['catalog'].get(nid)
         if not node:
-            await update.message.reply_text("❌ لا يوجد عنصر بهذا المعرف. حاول مجدداً أو أرسل /cancel.")
+            await update.message.reply_text("❌ لا يوجد عنصر بهذا المعرف. حاول مجدداً أو اضغط الزر أدناه للإلغاء.", reply_markup=CANCEL_BTN)
             return
         node['active'] = not node.get('active', True)
         save_db(db)
@@ -619,7 +686,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nid = text.strip()
         node = db['catalog'].get(nid)
         if not node:
-            await update.message.reply_text("❌ لا يوجد عنصر بهذا المعرف. حاول مجدداً أو أرسل /cancel.")
+            await update.message.reply_text("❌ لا يوجد عنصر بهذا المعرف. حاول مجدداً أو اضغط الزر أدناه للإلغاء.", reply_markup=CANCEL_BTN)
             return
         node['deleted'] = True
         save_db(db)
@@ -631,7 +698,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nid = text.strip()
         node = db['catalog'].get(nid)
         if not node:
-            await update.message.reply_text("❌ لا يوجد عنصر بهذا المعرف. حاول مجدداً أو أرسل /cancel.")
+            await update.message.reply_text("❌ لا يوجد عنصر بهذا المعرف. حاول مجدداً أو اضغط الزر أدناه للإلغاء.", reply_markup=CANCEL_BTN)
             return
         node['deleted'] = False
         save_db(db)
@@ -653,10 +720,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ud['awaiting_charge_proof'] = True
             await update.message.reply_text(
                 f"📸 المبلغ: {amount} {'$' if currency=='usd' else 'ل.س'} = **${usd_amount:.2f}**\n"
-                f"أرسل الآن صورة إثبات الدفع (وصل التحويل) لتأكيد طلبك:", parse_mode='Markdown'
+                f"أرسل الآن **صورة الوصل** أو **اكتب رقم/مرجع العملية** لتأكيد طلبك:", parse_mode='Markdown', reply_markup=CANCEL_BTN
             )
         except:
-            await update.message.reply_text("❌ اكتب رقماً صحيحاً! أو أرسل /cancel للإلغاء.")
+            await update.message.reply_text("❌ اكتب رقماً صحيحاً! ", reply_markup=CANCEL_BTN)
             return
         ud['awaiting_charge'] = False
         return
@@ -686,7 +753,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"هل تريد تأكيد طلب الاسترجاع؟", reply_markup=btn, parse_mode='Markdown'
             )
         except:
-            await update.message.reply_text("❌ اكتب رقماً صحيحاً! أو أرسل /cancel للإلغاء.")
+            await update.message.reply_text("❌ اكتب رقماً صحيحاً! ", reply_markup=CANCEL_BTN)
             return
         return
 
@@ -745,7 +812,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=btn, parse_mode='Markdown'
             )
         except:
-            await update.message.reply_text("❌ اكتب رقماً صحيحاً! أو أرسل /cancel للإلغاء.")
+            await update.message.reply_text("❌ اكتب رقماً صحيحاً! ", reply_markup=CANCEL_BTN)
             return
         return
 
@@ -754,7 +821,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ud['bot_desc'] = text
         ud['awaiting_bot_desc'] = False
         ud['awaiting_bot_contact'] = True
-        await update.message.reply_text("✍️ أرسل رقم تواصلك:")
+        await update.message.reply_text("✍️ أرسل رقم تواصلك:", reply_markup=CANCEL_BTN)
         return
 
     if ud.get('awaiting_bot_contact'):
@@ -769,9 +836,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if ud.get('awaiting_bot_price'):
         target_id = ud.get('bot_target_id')
+        order_id = ud.get('bot_order_id')
         ud['awaiting_bot_price'] = False
-        await context.bot.send_message(target_id, f"💰 **السعر المتفق عليه:** {text}")
-        await update.message.reply_text(f"✅ تم إرسال السعر إلى {target_id}")
+        m = re.search(r'(\d+(\.\d+)?)', text)
+        if not m:
+            await update.message.reply_text("❌ لم أتمكن من إيجاد رقم بالسعر! اكتب مثلاً: `10$` أو `10` — حاول مجدداً.", parse_mode='Markdown', reply_markup=CANCEL_BTN)
+            return
+        price = float(m.group(1))
+        order = db.get('bot_orders', {}).get(order_id)
+        if order:
+            order['price'] = price
+            save_db(db)
+        pay_btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"✅ موافقة ودفع ${price:.2f}", callback_data=f"bot_pay#{order_id}")]])
+        await context.bot.send_message(target_id, f"💰 **السعر المتفق عليه لطلب البوت:** ${price:.2f}\nاضغط الزر أدناه للموافقة والدفع من محفظتك:", parse_mode='Markdown', reply_markup=pay_btn)
+        await update.message.reply_text(f"✅ تم إرسال السعر (${price:.2f}) إلى {target_id} مع زر الدفع.")
         return
 
     if ud.get('awaiting_bot_time'):
@@ -779,6 +857,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ud['awaiting_bot_time'] = False
         await context.bot.send_message(target_id, f"⏰ **الوقت المتوقع:** {text}")
         await update.message.reply_text(f"✅ تم إرسال الوقت إلى {target_id}")
+        return
+
+    if ud.get('awaiting_bot_notes'):
+        order_id = ud.get('bot_order_id')
+        ud['awaiting_bot_notes'] = False
+        order = db.get('bot_orders', {}).get(order_id)
+        if not order:
+            await update.message.reply_text("❌ الطلب غير موجود.")
+            return
+        existing = order.get('details', '')
+        order['details'] = (existing + "\n" + text).strip() if existing else text
+        save_db(db)
+        await update.message.reply_text(f"✅ تم حفظ التفاصيل لطلب `{order_id}`. يمكنك استرجاعها لاحقاً من لوحة التحكم ← 🔎 بحث عن طلب بوت.", parse_mode='Markdown')
         return
 
     # ---------------- تسليم كود المنتج ----------------
@@ -813,12 +904,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if ud.get('awaiting_bot_file'):
         target_id = ud.get('bot_target_id')
+        order_id = ud.get('bot_order_id')
         ud['awaiting_bot_file'] = False
+        order = db.get('bot_orders', {}).get(order_id)
+        if order:
+            order['file_text'] = text
+            save_db(db)
         await context.bot.send_message(target_id, f"📂 **ملف البوت:**\n{text}")
-        await update.message.reply_text(f"✅ تم إرسال الملف (نص) إلى {target_id}")
+        await update.message.reply_text(f"✅ تم إرسال الملف (نص) إلى {target_id} وتم حفظه لطلب `{order_id}` لإعادة الإرسال لاحقاً.", parse_mode='Markdown')
         return
 
-    await update.message.reply_text("⚠️ لم أفهم طلبك، استخدم الأزرار من القائمة. (أو أرسل /cancel لإلغاء أي عملية عالقة)")
+    await update.message.reply_text("⚠️ لم أفهم طلبك، استخدم الأزرار من القائمة. (أو اضغط /cancel)", reply_markup=CANCEL_BTN)
 
 
 # ==================== معالج الصور والملفات ====================
@@ -855,9 +951,15 @@ async def handle_photo_and_document(update: Update, context: ContextTypes.DEFAUL
 
     if ud.get('awaiting_bot_file') and update.message.document:
         target_id = ud.get('bot_target_id')
+        order_id = ud.get('bot_order_id')
         ud['awaiting_bot_file'] = False
+        order = db.get('bot_orders', {}).get(order_id)
+        if order:
+            order['file_id'] = update.message.document.file_id
+            order['file_name'] = update.message.document.file_name
+            save_db(db)
         await context.bot.send_document(target_id, update.message.document.file_id, caption="📂 تفضل ملف البوت الخاص بك جاهزاً!")
-        await update.message.reply_text(f"✅ تم إرسال الملف إلى {target_id}")
+        await update.message.reply_text(f"✅ تم إرسال الملف إلى {target_id} وتم حفظه لطلب `{order_id}` لإعادة الإرسال لاحقاً.", parse_mode='Markdown')
         return
 
 
@@ -873,6 +975,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "cancel_flow":
         clear_awaiting(ud)
         await query.edit_message_text("✅ تم إلغاء العملية.")
+        return
+
+    if data.startswith("resend_botfile#"):
+        if not is_admin(db, user_id):
+            await query.answer("❌ غير مصرح لك", show_alert=True)
+            return
+        order_id = data.split('#')[1]
+        order = db.get('bot_orders', {}).get(order_id)
+        if not order or not order.get('file_id'):
+            await query.answer("❌ لا يوجد ملف محفوظ لهذا الطلب", show_alert=True)
+            return
+        try:
+            await context.bot.send_document(order['user_id'], order['file_id'], caption="📂 تفضل ملف البوت الخاص بك مجدداً!")
+            await query.answer("✅ تم إعادة الإرسال", show_alert=True)
+        except Exception as e:
+            await query.answer(f"❌ فشل الإرسال: {e}", show_alert=True)
+        return
+
+    if data == "open_panel":
+        if not is_admin(db, user_id):
+            await query.edit_message_text("❌ ليس لديك صلاحية.")
+            return
+        await query.edit_message_text("🛸 **لوحة التحكم الإدارية الخارقة**", reply_markup=admin_panel, parse_mode='Markdown')
         return
 
     if data.startswith("adm#"):
@@ -915,37 +1040,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action == "broadcast":
             clear_awaiting(ud)
             ud['awaiting_broadcast'] = True
-            await query.edit_message_text("✍️ اكتب رسالة الإعلان (أو /cancel للإلغاء):")
+            await query.edit_message_text("✍️ اكتب رسالة الإعلان :", reply_markup=CANCEL_BTN)
             return
 
         if action == "add_balance":
             clear_awaiting(ud)
             ud['awaiting_add_balance'] = True
-            await query.edit_message_text("✍️ اكتب: `آيدي|المبلغ` (أو /cancel للإلغاء)", parse_mode='Markdown')
+            await query.edit_message_text("✍️ اكتب: `آيدي|المبلغ` ", parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
 
         if action == "sub_balance":
             clear_awaiting(ud)
             ud['awaiting_sub_balance'] = True
-            await query.edit_message_text("✍️ اكتب: `آيدي|المبلغ` لخصمه (أو /cancel للإلغاء)", parse_mode='Markdown')
+            await query.edit_message_text("✍️ اكتب: `آيدي|المبلغ` لخصمه ", parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
 
         if action == "ban_user":
             clear_awaiting(ud)
             ud['awaiting_ban_user'] = True
-            await query.edit_message_text("✍️ اكتب آيدي المستخدم لحظره (أو /cancel):")
+            await query.edit_message_text("✍️ اكتب آيدي المستخدم لحظره :", reply_markup=CANCEL_BTN)
             return
 
         if action == "unban_user":
             clear_awaiting(ud)
             ud['awaiting_unban_user'] = True
-            await query.edit_message_text("✍️ اكتب آيدي المستخدم لرفع الحظر عنه (أو /cancel):")
+            await query.edit_message_text("✍️ اكتب آيدي المستخدم لرفع الحظر عنه :", reply_markup=CANCEL_BTN)
             return
 
         if action == "search_user":
             clear_awaiting(ud)
             ud['awaiting_search_user'] = True
-            await query.edit_message_text("✍️ اكتب آيدي المستخدم (أو /cancel):")
+            await query.edit_message_text("✍️ اكتب آيدي المستخدم :", reply_markup=CANCEL_BTN)
             return
 
         if action == "view_balances":
@@ -965,7 +1090,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action == "edit_rate":
             clear_awaiting(ud)
             ud['awaiting_new_rate'] = True
-            await query.edit_message_text(f"📈 سعر الصرف الحالي: {db.get('exchange_rate',13800):,} ل.س\n✍️ اكتب السعر الجديد (أو /cancel):")
+            await query.edit_message_text(f"📈 سعر الصرف الحالي: {db.get('exchange_rate',13800):,} ل.س\n✍️ اكتب السعر الجديد :", reply_markup=CANCEL_BTN)
             return
 
         if action == "tree":
@@ -1001,8 +1126,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 "✍️ اكتب بالصيغة:\n`parent_id_او_root|games_او_cards_او_numbers|الاسم`\n\n"
                 "مثال (قسم رئيسي جديد): `root|games|لعبة جديدة`\n"
-                "مثال (مجلد فرعي داخل g1): `g1|games|مجلد فرعي`\n(أو /cancel)",
-                parse_mode='Markdown')
+                "مثال (مجلد فرعي داخل g1): `g1|games|مجلد فرعي`",
+                parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
 
         if action == "add_product":
@@ -1011,38 +1136,76 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 "✍️ اكتب بالصيغة:\n`parent_id|kind|الاسم|السعر`\n\n"
                 "kind: game_code / card / whatsapp_number / telegram_number\n"
-                "مثال: `g3|game_code|كود 3200 شدة|45.5`\n(أو /cancel)",
-                parse_mode='Markdown')
+                "مثال: `g3|game_code|كود 3200 شدة|45.5`",
+                parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
 
         if action == "edit_price":
             clear_awaiting(ud)
             ud['awaiting_edit_price'] = True
-            await query.edit_message_text("✍️ اكتب بالصيغة: `node_id|السعر_الجديد`\nمثال: `g7|24.5`\n(أو /cancel)", parse_mode='Markdown')
+            await query.edit_message_text("✍️ اكتب بالصيغة: `node_id|السعر_الجديد`\nمثال: `g7|24.5`\n", parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
 
         if action == "toggle":
             clear_awaiting(ud)
             ud['awaiting_toggle'] = True
-            await query.edit_message_text("✍️ اكتب معرف العنصر (node_id) لتبديل حالته تفعيل/تعطيل (أو /cancel):")
+            await query.edit_message_text("✍️ اكتب معرف العنصر (node_id) لتبديل حالته تفعيل/تعطيل :", reply_markup=CANCEL_BTN)
             return
 
         if action == "delete_node":
             clear_awaiting(ud)
             ud['awaiting_delete_node'] = True
-            await query.edit_message_text("✍️ اكتب معرف العنصر (node_id) لحذفه (قابل للاسترجاع، أو /cancel):")
+            await query.edit_message_text("✍️ اكتب معرف العنصر (node_id) لحذفه (قابل للاسترجاع، ):", reply_markup=CANCEL_BTN)
             return
 
         if action == "restore_node":
             clear_awaiting(ud)
             ud['awaiting_restore_node'] = True
-            await query.edit_message_text("✍️ اكتب معرف العنصر (node_id) لاسترجاعه (أو /cancel):")
+            await query.edit_message_text("✍️ اكتب معرف العنصر (node_id) لاسترجاعه :", reply_markup=CANCEL_BTN)
             return
 
         if action == "clean":
             db["pending_orders"] = {}
             save_db(db)
             await query.edit_message_text("🧹 تم تنظيف كل الطلبات المعلقة.")
+            return
+
+        if action == "search_bot_order":
+            clear_awaiting(ud)
+            ud['awaiting_search_bot_order'] = True
+            await query.edit_message_text("✍️ اكتب رقم طلب البوت (order_id) أو آيدي الزبون للبحث عنه:", reply_markup=CANCEL_BTN)
+            return
+
+        if action == "toggle_maintenance":
+            db['bot_maintenance'] = not db.get('bot_maintenance', False)
+            save_db(db)
+            state = "مفعّل 🛠️" if db['bot_maintenance'] else "متوقف ✅"
+            await query.edit_message_text(f"وضع الصيانة الآن: {state}\n(عند التفعيل، الزبائن العاديون لا يستطيعون استخدام البوت وتظهر لهم رسالة صيانة).")
+            return
+
+        if action == "admin_notes":
+            clear_awaiting(ud)
+            ud['awaiting_admin_notes'] = True
+            current = db.get('admin_notes', '') or 'لا توجد ملاحظات بعد.'
+            await query.edit_message_text(f"📝 **الملاحظات الحالية:**\n{current}\n\n✍️ اكتب ملاحظات جديدة لتحديثها:", parse_mode='Markdown', reply_markup=CANCEL_BTN)
+            return
+
+        if action == "list_admins":
+            admins = db.get('authenticated_admins', [])
+            lines = ["👮 **الأدمنية المصادقين:**\n━━━━━━━━━━━━━━━━━━━━"]
+            for a in admins:
+                name = db['users'].get(a, {}).get('name', 'غير معروف')
+                lines.append(f"`{a}` — {name}")
+            await query.edit_message_text("\n".join(lines) if admins else "لا يوجد أدمنية مصادقين بعد.", parse_mode='Markdown')
+            return
+
+        if action == "export_users":
+            users_data = json.dumps(db.get('users', {}), indent=2, ensure_ascii=False)
+            await query.edit_message_text("📤 جاري تصدير المستخدمين...")
+            await context.bot.send_document(
+                chat_id=user_id,
+                document=BufferedInputFile(users_data.encode('utf-8'), filename='users_export.json'),
+                caption=f"👥 كل المستخدمين ({len(db.get('users', {}))})")
             return
 
         if action == "backup":
@@ -1130,7 +1293,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             clear_awaiting(ud)
             ud['pending_node_id'] = nid
             ud['awaiting_game_id'] = True
-            await query.edit_message_text(f"🎁 {node['name']}\n✍️ **أدخل الآيدي (ID) الخاص بك:**", parse_mode='Markdown')
+            await query.edit_message_text(f"🎁 {node['name']}\n✍️ **أدخل الآيدي (ID) الخاص بك:**", parse_mode='Markdown', reply_markup=CANCEL_BTN)
             return
 
         # بطاقة أو رقم واتساب/تيليجرام: تأكيد قبل الإرسال
@@ -1364,7 +1527,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ud['card_type'] = card_type.upper()
         clear_awaiting(ud)
         ud['awaiting_phone'] = True
-        await query.edit_message_text(f"✍️ **أدخل رقم الهاتف** ({card_type.upper()}):")
+        await query.edit_message_text(f"✍️ **أدخل رقم الهاتف** ({card_type.upper()}):", reply_markup=CANCEL_BTN)
         return
 
     if data.startswith("charge#"):
@@ -1372,7 +1535,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clear_awaiting(ud)
         ud['charge_currency'] = currency
         ud['awaiting_charge'] = True
-        await query.edit_message_text(f"✍️ **أدخل المبلغ** {'بالدولار' if currency=='usd' else 'بالليرة السورية'}:")
+        await query.edit_message_text(f"✍️ **أدخل المبلغ** {'بالدولار' if currency=='usd' else 'بالليرة السورية'}:", reply_markup=CANCEL_BTN)
         return
 
     if data.startswith("refund#"):
@@ -1380,13 +1543,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clear_awaiting(ud)
         ud['refund_currency'] = currency
         ud['awaiting_refund'] = True
-        await query.edit_message_text(f"✍️ **أدخل المبلغ** {'بالدولار' if currency=='usd' else 'بالليرة السورية'} المراد استرجاعه:")
+        await query.edit_message_text(f"✍️ **أدخل المبلغ** {'بالدولار' if currency=='usd' else 'بالليرة السورية'} المراد استرجاعه:", reply_markup=CANCEL_BTN)
         return
 
     if data == "bot_order#start":
         clear_awaiting(ud)
         ud['awaiting_bot_desc'] = True
-        await query.edit_message_text("🤖 **إنشاء بوت جديد**\n✍️ اكتب مواصفات البوت الذي تريده:")
+        await query.edit_message_text("🤖 **إنشاء بوت جديد**\n✍️ اكتب مواصفات البوت الذي تريده:", reply_markup=CANCEL_BTN)
         return
 
     if data.startswith("srv#"):
@@ -1395,14 +1558,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         desc = ud.get('bot_desc', 'غير محدد')
         contact = ud.get('bot_contact', 'غير محدد')
         order_id = generate_order_id()
+        db.setdefault('bot_orders', {})[order_id] = {
+            "user_id": user_id, "desc": desc, "contact": contact, "srv_name": srv_name,
+            "price": None, "details": "", "file_id": None, "file_name": None, "status": "pending"
+        }
+        save_db(db)
         await query.edit_message_text("🚀 جاري إرسال الطلب للإدارة...")
         await context.bot.send_message(
             ADMIN_CHANNEL_ID,
             f"🤖 **طلب إنشاء بوت جديد**\n📋 رقم الطلب: {order_id}\n👤 {update.effective_user.first_name}\n"
             f"🆔 {user_id}\n💬 {contact}\n📝 {desc}\n🖥️ {srv_name}",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💰 السعر", callback_data=f"bot_price#{user_id}#{order_id}")],
+                [InlineKeyboardButton("💰 السعر (مع خصم من محفظة الزبون)", callback_data=f"bot_price#{user_id}#{order_id}")],
                 [InlineKeyboardButton("⏰ الوقت", callback_data=f"bot_time#{user_id}#{order_id}")],
+                [InlineKeyboardButton("📝 تفاصيل/ملاحظات", callback_data=f"bot_notes#{user_id}#{order_id}")],
                 [InlineKeyboardButton("📂 ملف", callback_data=f"bot_file#{user_id}#{order_id}")],
                 [InlineKeyboardButton("❌ رفض", callback_data=f"bot_reject#{user_id}#{order_id}")]
             ])
@@ -1415,32 +1584,75 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = data.split('#')
         clear_awaiting(ud)
         ud['bot_target_id'] = parts[1]
+        ud['bot_order_id'] = parts[2]
         ud['awaiting_bot_price'] = True
         await query.edit_message_text(f"📩 تحقق من رسائلك الخاصة مع البوت لكتابة السعر (طلب {parts[2]}).")
-        await notify_admin_dm(context, f"✍️ اكتب السعر الآن هنا للمستخدم `{parts[1]}` (طلب {parts[2]}):")
+        await notify_admin_dm(context, f"✍️ اكتب السعر الآن هنا للمستخدم `{parts[1]}` (طلب {parts[2]})، مثال: `10$` أو `10`:")
         return
 
     if data.startswith("bot_time#"):
         parts = data.split('#')
         clear_awaiting(ud)
         ud['bot_target_id'] = parts[1]
+        ud['bot_order_id'] = parts[2]
         ud['awaiting_bot_time'] = True
         await query.edit_message_text(f"📩 تحقق من رسائلك الخاصة مع البوت لكتابة الوقت (طلب {parts[2]}).")
         await notify_admin_dm(context, f"✍️ اكتب الوقت المتوقع الآن هنا للمستخدم `{parts[1]}` (طلب {parts[2]}):")
+        return
+
+    if data.startswith("bot_notes#"):
+        parts = data.split('#')
+        clear_awaiting(ud)
+        ud['bot_target_id'] = parts[1]
+        ud['bot_order_id'] = parts[2]
+        ud['awaiting_bot_notes'] = True
+        await query.edit_message_text(f"📩 تحقق من رسائلك الخاصة مع البوت لكتابة التفاصيل/الملاحظات (طلب {parts[2]}).")
+        await notify_admin_dm(context, f"📝 اكتب الآن التفاصيل/الملاحظات الخاصة بطلب `{parts[2]}` (تُحفظ ليمكنك الرجوع لها لاحقاً، لا تُرسل للزبون):")
         return
 
     if data.startswith("bot_file#"):
         parts = data.split('#')
         clear_awaiting(ud)
         ud['bot_target_id'] = parts[1]
+        ud['bot_order_id'] = parts[2]
         ud['awaiting_bot_file'] = True
         await query.edit_message_text(f"📩 تحقق من رسائلك الخاصة مع البوت لإرسال الملف (طلب {parts[2]}).")
         await notify_admin_dm(context, f"📤 أرسل ملف البوت الآن هنا (كـ Document) للمستخدم `{parts[1]}` (طلب {parts[2]}):")
         return
 
+    if data.startswith("bot_pay#"):
+        order_id = data.split('#')[1]
+        order = db.get('bot_orders', {}).get(order_id)
+        if not order or order['user_id'] != user_id:
+            await query.edit_message_text("⚠️ هذا الطلب غير موجود.")
+            return
+        if order.get('status') == 'paid':
+            await query.edit_message_text("✅ تم دفع هذا الطلب مسبقاً.")
+            return
+        price = order.get('price')
+        if price is None:
+            await query.edit_message_text("⚠️ لم يتم تحديد سعر لهذا الطلب بعد.")
+            return
+        balance = get_balance(db, user_id)
+        if balance < price:
+            await query.edit_message_text(f"❌ رصيدك (${balance:.2f}) لا يكفي لدفع ${price:.2f}. اشحن محفظتك أولاً.")
+            return
+        update_balance(db, user_id, -price)
+        order['status'] = 'paid'
+        db['stats']['purchases'] += 1
+        log_activity(db, f"دفع طلب بوت #{order_id} من {user_id} بقيمة ${price:.2f}")
+        save_db(db)
+        await query.edit_message_text(f"✅ تم خصم ${price:.2f} من محفظتك. سيتم التواصل معك لإكمال طلب البوت 🤖")
+        await context.bot.send_message(ADMIN_CHANNEL_ID, f"💰 تم دفع طلب البوت (رقم {order_id}) من قبل الزبون `{user_id}` — تم خصم ${price:.2f}")
+        return
+
     if data.startswith("bot_reject#"):
         parts = data.split('#')
         await query.edit_message_text(f"❌ تم رفض طلب البوت (رقم {parts[2]})")
+        order = db.get('bot_orders', {}).get(parts[2])
+        if order:
+            order['status'] = 'rejected'
+            save_db(db)
         await context.bot.send_message(parts[1], f"❌ عذراً، تم رفض طلب إنشاء البوت (رقم {parts[2]}).")
         return
 
