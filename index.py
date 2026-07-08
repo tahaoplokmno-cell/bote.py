@@ -13,7 +13,7 @@ SYRIA_CASH_NUMBER = "8bf19e519ba13641f2a8ae981b8f3081"
 SYRIA_CASH_NAME = "شام كاش"
 NIGHT_START_HOUR, NIGHT_END_HOUR, PAGE_SIZE = 0, 8, 6
 
-REDEMPTION_INSTRUCTIONS = "\n\n📦 تعليمات الاستبدال:\n1️⃣ ادخل إلى الموقع الرسمي للشحن\n2️⃣ اختر لعبتك وأدخل آيدي حسابك\n3️⃣ اختر استرداد الاكواد وأدخل الكود\n4️⃣ اضغط استرداد\n🔔 شغّل VPN إذا كنت داخل سوريا"
+REDEMPTION_INSTRUCTIONS = "\n\n📦 تعليمات الاستبدال:\n1️⃣https://www.midasbuy.com/midasbuy/ng/zh/game/pubgmobile  ادخل إلى الموقع الرسمي للشحن\n2️⃣ اختر لعبتك وأدخل آيدي حسابك\n3️⃣ اختر استرداد الاكواد وأدخل الكود\n4️⃣ اضغط استرداد\n🔔 شغّل VPN إذا كنت داخل سوريا"
 
 def default_catalog():
     cat = {}
@@ -275,8 +275,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🤖 اكتب مواصفات البوت الذي تريده:",reply_markup=CANCEL_BTN); return
     if text == '⚙️ الإعدادات': await update.message.reply_text(f"⚙️ **الإعدادات**\n👤 {safe_md(update.effective_user.first_name or 'مستخدم')}\n🆔 `{user_id}`"); return
     if text == '📞 الدعم الفني':
-        await update.message.reply_text(f"📞 **الدعم الفني**\nللتواصل المباشر: {DEVELOPER_USERNAME}\n💳 شام كوس: {SYRIA_CASH_NUMBER}\nأو أرسل شكواك/استفسارك مباشرة من هنا:",reply_markup=support_menu); return
-
+        await update.message.reply_text(
+    f"📞 **الدعم الفني**\nللتواصل المباشر: {DEVELOPER_USERNAME}\nأو أرسل شكواك/استفسارك مباشرة من هنا:",
+    reply_markup=support_menu
+)
+return
     if ud.get('awaiting_password'):
         ud['awaiting_password']=False
         if text.strip()==ADMIN_PASSWORD:
